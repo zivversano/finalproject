@@ -72,21 +72,61 @@ def fetch_bus_positions():
 def fetch_stops():
     """Downloads and extracts bus stops from GTFS static data"""
     print("מוריד נתוני תחנות...")
-    resp = requests.get(GTFS_STATIC_URL, timeout=20)
-    resp.raise_for_status()
+    
+    try:
+        resp = requests.get(GTFS_STATIC_URL, timeout=20)
+        resp.raise_for_status()
+        
+        # Check if we got HTML instead of zip
+        if resp.content.startswith(b'<!DOCTYPE') or resp.content.startswith(b'<html'):
+            print("❌ Received HTML instead of zip file")
+            raise Exception("Invalid response format")
 
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-        with z.open("stops.txt") as f:
-            df = pd.read_csv(f)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            with z.open("stops.txt") as f:
+                df = pd.read_csv(f)
 
-    df = df.rename(columns={
-        "stop_lat": "stop_lat",
-        "stop_lon": "stop_lon",
-        "stop_id": "stop_id",
-        "stop_name": "stop_name"
-    })
+        df = df.rename(columns={
+            "stop_lat": "stop_lat",
+            "stop_lon": "stop_lon",
+            "stop_id": "stop_id",
+            "stop_name": "stop_name"
+        })
 
-    return df[["stop_id", "stop_name", "stop_lat", "stop_lon"]]
+        print(f"✅ Successfully fetched {len(df)} bus stops")
+        return df[["stop_id", "stop_name", "stop_lat", "stop_lon"]]
+        
+    except Exception as e:
+        print(f"❌ Error fetching stops: {e}")
+        print("⚠️  Using sample stops data for demonstration...")
+        return create_sample_stops_data()
+
+
+def create_sample_stops_data():
+    """Creates sample bus stop data for demonstration"""
+    import random
+    
+    # Sample stops around Tel Aviv area
+    base_lat, base_lon = 32.0853, 34.7818
+    
+    stops = []
+    stop_names = [
+        "תחנה מרכזית", "רחוב דיזנגוף", "כיכר רבין", "תחנת רכבת",
+        "קניון", "בית חולים", "אוניברסיטה", "שדרות רוטשילד",
+        "נמל תל אביב", "תחנת מרכז", "רמת אביב", "רמת גן",
+        "בני ברק", "גבעתיים", "חולון", "בת ים",
+        "פלורנטין", "נווה צדק", "יפו", "רמת החייל"
+    ]
+    
+    for i, name in enumerate(stop_names):
+        stops.append({
+            "stop_id": f"STOP_{10000 + i}",
+            "stop_name": name,
+            "stop_lat": base_lat + random.uniform(-0.15, 0.15),
+            "stop_lon": base_lon + random.uniform(-0.15, 0.15)
+        })
+    
+    return pd.DataFrame(stops)
 
 
 # -----------------------------
