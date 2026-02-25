@@ -1,12 +1,16 @@
 import requests
+import zipfile
+import io
 import pandas as pd
 from google.transit import gtfs_realtime_pb2
+from geopy.distance import geodesic
 from datetime import datetime
 import sys
 
 GTFS_RT_URL = "https://gtfs.mot.gov.il/gtfsrt/realtimeVehiclePositions.pb"
 # Alternative URL with route filter (sometimes works better)
 GTFS_RT_URL_ALT = "https://gtfs.mot.gov.il/gtfsrt/VehiclePositions.pb"
+GTFS_STATIC_URL = "https://gtfs.mot.gov.il/gtfsfiles/gtfs.zip"
 
 def fetch_gtfs_rt():
     """Downloads the GTFS-RT file in Protobuf format"""
@@ -81,6 +85,20 @@ def parse_vehicle_positions(pb_data):
 
     return rows
 
+def download_gtfs_static():
+    """מוריד את קובץ ה‑GTFS (ZIP) מהשרת"""
+    print("מוריד GTFS סטטי...")
+    resp = requests.get(GTFS_STATIC_URL, timeout=20)
+    resp.raise_for_status()
+    return resp.content
+
+def extract_stops(zip_bytes):
+    """מוציא את stops.txt מתוך ה‑ZIP ומחזיר DataFrame"""
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        with z.open("stops.txt") as f:
+            df = pd.read_csv(f)
+    return df
+
 def main():
     print("Downloading real-time bus data...")
     
@@ -103,6 +121,21 @@ def main():
     # Save as JSON
     df.to_json("bus_positions.json", orient="records", indent=2, force_ascii=False)
     print("\n📁 JSON file saved as bus_positions.json")
+    
+    # Download and extract bus stops
+    print("\n" + "="*60)
+    try:
+        zip_bytes = download_gtfs_static()
+        stops_df = extract_stops(zip_bytes)
+
+        print("\n📌 טבלת תחנות (5 שורות ראשונות):")
+        print(stops_df.head())
+
+        # שמירה כ‑JSON
+        stops_df.to_json("bus_stops.json", orient="records", indent=2, force_ascii=False)
+        print("\n📁 קובץ JSON נשמר בשם bus_stops.json")
+    except Exception as e:
+        print(f"\n⚠️  Error downloading bus stops: {e}")
 
 def create_sample_data():
     """Creates sample vehicle position data for demonstration"""
