@@ -12,8 +12,12 @@ GTFS_RT_URL = "https://gtfs.mot.gov.il/gtfsrt/realtimeVehiclePositions.pb"
 GTFS_RT_URL_ALT = "https://gtfs.mot.gov.il/gtfsrt/VehiclePositions.pb"
 GTFS_STATIC_URL = "https://gtfs.mot.gov.il/gtfsfiles/gtfs.zip"
 
-def fetch_gtfs_rt():
-    """Downloads the GTFS-RT file in Protobuf format"""
+
+# -----------------------------
+# 1. Fetch bus positions (GTFS-RT)
+# -----------------------------
+def fetch_bus_positions():
+    """Downloads and parses real-time bus positions"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/x-protobuf,application/octet-stream'
@@ -26,118 +30,89 @@ def fetch_gtfs_rt():
             resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
             
-            print(f"Response status: {resp.status_code}")
-            print(f"Content-Type: {resp.headers.get('Content-Type')}")
-            print(f"Content length: {len(resp.content)} bytes")
-            
             # Check if we got HTML instead of protobuf
             if resp.content.startswith(b'<!DOCTYPE') or resp.content.startswith(b'<html'):
                 print(f"❌ Received HTML instead of protobuf data from {url}")
                 continue
             
-            print(f"✅ Successfully fetched protobuf data")
-            return resp.content
+            feed = gtfs_realtime_pb2.FeedMessage()
+            feed.ParseFromString(resp.content)
+
+            rows = []
+            for entity in feed.entity:
+                if not entity.HasField("vehicle"):
+                    continue
+
+                v = entity.vehicle
+
+                rows.append({
+                    "vehicle_id": v.vehicle.id,
+                    "trip_id": v.trip.trip_id,
+                    "route_id": v.trip.route_id,
+                    "lat": v.position.latitude,
+                    "lon": v.position.longitude,
+                    "timestamp": datetime.utcfromtimestamp(v.timestamp).isoformat() if v.timestamp else None
+                })
+
+            print(f"✅ Successfully fetched {len(rows)} bus positions")
+            return pd.DataFrame(rows)
+            
         except Exception as e:
             print(f"❌ Error with {url}: {e}")
             continue
     
-    # If both URLs failed, provide helpful error message
-    print("\n" + "="*60)
-    print("⚠️  Could not fetch real-time data from Israel MOT API")
-    print("="*60)
-    print("\nPossible reasons:")
-    print("1. The API might require registration/authentication")
-    print("2. The API endpoints may have changed")
-    print("3. Access might be restricted from your location")
-    print("\nPlease check:")
-    print("- https://www.gov.il/he/departments/general/gtfs_general_transit_feed_specifications")
-    print("- https://open-bus-stride-api.hasadna.org.il/ (alternative)")
-    sys.exit(1)
+    # If both URLs failed, use sample data
+    print("⚠️  Using sample data for demonstration...")
+    return create_sample_bus_data()
 
-def parse_vehicle_positions(pb_data):
-    """Parses the Protobuf and returns a list of dictionaries"""
-    feed = gtfs_realtime_pb2.FeedMessage()
-    try:
-        feed.ParseFromString(pb_data)
-    except Exception as e:
-        print(f"Error parsing protobuf: {e}")
-        print(f"Data type: {type(pb_data)}")
-        print(f"Data length: {len(pb_data)}")
-        raise
 
-    rows = []
-    for entity in feed.entity:
-        if not entity.HasField("vehicle"):
-            continue
-
-        v = entity.vehicle
-
-        rows.append({
-            "vehicle_id": v.vehicle.id,
-            "trip_id": v.trip.trip_id,
-            "route_id": v.trip.route_id,
-            "latitude": v.position.latitude,
-            "longitude": v.position.longitude,
-            "bearing": v.position.bearing,
-            "speed": v.position.speed,
-            "timestamp": datetime.utcfromtimestamp(v.timestamp).isoformat() if v.timestamp else None
-        })
-
-    return rows
-
-def download_gtfs_static():
-    """מוריד את קובץ ה‑GTFS (ZIP) מהשרת"""
-    print("מוריד GTFS סטטי...")
+# -----------------------------
+# 2. Fetch bus stops (GTFS Static)
+# -----------------------------
+def fetch_stops():
+    """Downloads and extracts bus stops from GTFS static data"""
+    print("מוריד נתוני תחנות...")
     resp = requests.get(GTFS_STATIC_URL, timeout=20)
     resp.raise_for_status()
-    return resp.content
 
-def extract_stops(zip_bytes):
-    """מוציא את stops.txt מתוך ה‑ZIP ומחזיר DataFrame"""
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
         with z.open("stops.txt") as f:
             df = pd.read_csv(f)
-    return df
 
-def main():
-    print("Downloading real-time bus data...")
-    
-    try:
-        pb_data = fetch_gtfs_rt()
-        print("Parsing data...")
-        rows = parse_vehicle_positions(pb_data)
-    except SystemExit:
-        # API not available, use sample data for demonstration
-        print("\n📝 Using sample data for demonstration...")
-        rows = create_sample_data()
+    df = df.rename(columns={
+        "stop_lat": "stop_lat",
+        "stop_lon": "stop_lon",
+        "stop_id": "stop_id",
+        "stop_name": "stop_name"
+    })
 
-    # Relational table (DataFrame)
-    df = pd.DataFrame(rows)
-    print("\n📌 Relational table (first 5 rows):")
-    print(df.head())
-    
-    print(f"\n📊 Total vehicles: {len(df)}")
+    return df[["stop_id", "stop_name", "stop_lat", "stop_lon"]]
 
-    # Save as JSON
-    df.to_json("bus_positions.json", orient="records", indent=2, force_ascii=False)
-    print("\n📁 JSON file saved as bus_positions.json")
-    
-    # Download and extract bus stops
-    print("\n" + "="*60)
-    try:
-        zip_bytes = download_gtfs_static()
-        stops_df = extract_stops(zip_bytes)
 
-        print("\n📌 טבלת תחנות (5 שורות ראשונות):")
-        print(stops_df.head())
+# -----------------------------
+# 3. Match each bus to nearest stop
+# -----------------------------
+def find_nearest_stop(bus_row, stops_df):
+    """Finds the nearest bus stop for a given bus position"""
+    bus_loc = (bus_row.lat, bus_row.lon)
 
-        # שמירה כ‑JSON
-        stops_df.to_json("bus_stops.json", orient="records", indent=2, force_ascii=False)
-        print("\n📁 קובץ JSON נשמר בשם bus_stops.json")
-    except Exception as e:
-        print(f"\n⚠️  Error downloading bus stops: {e}")
+    # מחשבים מרחק לכל תחנה
+    stops_df["distance_m"] = stops_df.apply(
+        lambda row: geodesic(bus_loc, (row.stop_lat, row.stop_lon)).meters,
+        axis=1
+    )
 
-def create_sample_data():
+    # מוצאים את התחנה הקרובה ביותר
+    nearest = stops_df.loc[stops_df["distance_m"].idxmin()]
+
+    return pd.Series({
+        "nearest_stop_id": nearest.stop_id,
+        "nearest_stop_name": nearest.stop_name,
+        "distance_to_stop_m": nearest.distance_m
+    })
+
+
+def create_sample_bus_data():
     """Creates sample vehicle position data for demonstration"""
     from datetime import datetime, timedelta
     import random
@@ -151,14 +126,36 @@ def create_sample_data():
             "vehicle_id": f"BUS_{1000 + i}",
             "trip_id": f"TRIP_{5000 + i}",
             "route_id": f"ROUTE_{random.randint(1, 50)}",
-            "latitude": base_lat + random.uniform(-0.1, 0.1),
-            "longitude": base_lon + random.uniform(-0.1, 0.1),
-            "bearing": random.uniform(0, 360),
-            "speed": random.uniform(0, 60),
+            "lat": base_lat + random.uniform(-0.1, 0.1),
+            "lon": base_lon + random.uniform(-0.1, 0.1),
             "timestamp": (datetime.now() - timedelta(minutes=random.randint(0, 30))).isoformat()
         })
     
-    return rows
+    return pd.DataFrame(rows)
+
+
+
+# -----------------------------
+# MAIN
+# -----------------------------
+def main():
+    print("מוריד נתוני אוטובוסים...")
+    buses = fetch_bus_positions()
+
+    print("מוריד נתוני תחנות...")
+    stops = fetch_stops()
+
+    print("מחשב תחנה קרובה לכל אוטובוס...")
+    merged = buses.join(
+        buses.apply(lambda row: find_nearest_stop(row, stops.copy()), axis=1)
+    )
+
+    print("\n📌 טבלה רלציונית (5 שורות ראשונות):")
+    print(merged.head())
+
+    merged.to_json("buses_with_nearest_stops.json", orient="records", indent=2, force_ascii=False)
+    print("\n📁 נשמר קובץ JSON בשם buses_with_nearest_stops.json")
+
 
 if __name__ == "__main__":
     main()
