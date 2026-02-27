@@ -5,8 +5,8 @@
 kafka-python==2.0.2
 
 # ── GTFS-RT Protocol Buffers ──────────────────────────────
-gtfs-realtime-bindings==1.0.0    # Google GTFS-RT protobuf bindings
-protobuf==4.24.0
+gtfs-realtime-bindings==2.0.0    # Google GTFS-RT protobuf bindings
+protobuf>=4.24.0
 
 # ── HTTP ──────────────────────────────────────────────────
 requests==2.31.0

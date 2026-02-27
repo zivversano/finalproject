@@ -107,9 +107,17 @@ fi
 
 log "מפעיל סביבה וירטואלית ומתקין ספריות..."
 source venv/bin/activate
+
+# Upgrade pip quietly
 pip install --upgrade pip -q
-pip install -r requirements.txt -q
-success "כל הספריות הותקנו"
+
+# Install only if a key package is missing (avoids slow re-resolution on every run)
+if ! python3 -c "import kafka, pandas, boto3, dotenv, geopy; from google.transit import gtfs_realtime_pb2" 2>/dev/null; then
+  pip install -r requirements.txt -q
+  success "כל הספריות הותקנו"
+else
+  success "כל הספריות כבר מותקנות — מדלג"
+fi
 
 # ─────────────────────────────────────────────────────────────
 #  שלב 2: הרמת Docker Services
