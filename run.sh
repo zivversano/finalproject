@@ -127,8 +127,21 @@ step "2 — הרמת שירותי Docker"
 log "מוריד images נדרשים (עשוי לקחת כמה דקות בפעם הראשונה)..."
 docker compose pull --quiet 2>/dev/null || true
 
+log "מנקה קונטיינרים ישנים שעלולים לגרום קונפליקט..."
+docker compose down --remove-orphans 2>/dev/null || true
+
+# Force-remove any containers with conflicting names that may exist outside this project
+for container in elasticsearch zookeeper kafka minio postgres airflow-webserver airflow-scheduler kibana kafka-ui; do
+  if docker inspect "$container" &>/dev/null; then
+    warn "מסיר קונטיינר קיים: $container"
+    docker rm -f "$container" 2>/dev/null || true
+  fi
+done
+
 log "מפעיל את כל השירותים..."
-docker compose up -d
+docker compose up -d 2>&1 || {
+  warn "docker compose up יצא עם שגיאה — בודק מצב קונטיינרים..."
+}
 
 success "כל הקונטיינרים הועלו"
 echo ""
@@ -142,7 +155,7 @@ step "3 — המתנה לשירותים להיות מוכנים"
 
 wait_for_service "Kafka UI"  "http://localhost:8080"        30
 wait_for_service "MinIO"     "http://localhost:9000/minio/health/live" 20
-wait_for_service "Airflow"   "http://localhost:8081/health"  60
+wait_for_service "Airflow"   "http://localhost:8081/health"  120
 
 # ─────────────────────────────────────────────────────────────
 #  שלב 4: יצירת Kafka Topics
