@@ -27,7 +27,6 @@ def _consume_topic(topic_key: str, group_id: str, transformer_cls, s3_prefix: st
     from kafka import KafkaConsumer
     from config.settings import KAFKA_TOPICS
     from storage.s3_writer import S3Writer
-    from warehouse.redshift_writer import RedshiftWriter
     import json, os
 
     consumer = KafkaConsumer(
@@ -37,13 +36,12 @@ def _consume_topic(topic_key: str, group_id: str, transformer_cls, s3_prefix: st
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=False,
-        consumer_timeout_ms=15000,
+        consumer_timeout_ms=5000,    # 5s max wait — keeps tasks within 30s schedule
         max_poll_records=500,
     )
 
     transformer     = transformer_cls()
     s3_writer       = S3Writer(prefix=s3_prefix)
-    redshift_writer = RedshiftWriter()
 
     records  = []
     count    = 0
@@ -67,8 +65,11 @@ def _consume_topic(topic_key: str, group_id: str, transformer_cls, s3_prefix: st
 
     if records:
         s3_writer.write_batch(records)
-        redshift_writer.bulk_insert(redshift_table, records)
-        redshift_writer.close()
+        if os.getenv("REDSHIFT_HOST"):   # skip Redshift when not configured
+            from warehouse.redshift_writer import RedshiftWriter
+            redshift_writer = RedshiftWriter()
+            redshift_writer.bulk_insert(redshift_table, records)
+            redshift_writer.close()
 
     return len(records)
 
@@ -116,7 +117,6 @@ def consume_service_alerts(**context):
     from kafka import KafkaConsumer
     from config.settings import KAFKA_TOPICS
     from storage.s3_writer import S3Writer
-    from warehouse.redshift_writer import RedshiftWriter
     import json, os
 
     consumer = KafkaConsumer(
@@ -126,11 +126,10 @@ def consume_service_alerts(**context):
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=False,
-        consumer_timeout_ms=10000,
+        consumer_timeout_ms=5000,    # 5s max wait
     )
     transformer     = ServiceAlertTransformer()
     s3_writer       = S3Writer(prefix="raw/service-alerts")
-    redshift_writer = RedshiftWriter()
 
     records = []
     for msg in consumer:
@@ -146,10 +145,12 @@ def consume_service_alerts(**context):
 
     if records:
         s3_writer.write_batch(records)
-        # Alerts use upsert (same alert can update)
-        for r in records:
-            redshift_writer.upsert("transit.fact_service_alerts", r, "alert_id")
-        redshift_writer.close()
+        if os.getenv("REDSHIFT_HOST"):   # skip Redshift when not configured
+            from warehouse.redshift_writer import RedshiftWriter
+            redshift_writer = RedshiftWriter()
+            for r in records:
+                redshift_writer.upsert("transit.fact_service_alerts", r, "alert_id")
+            redshift_writer.close()
 
     print(f"Service alerts processed: {len(records)}")
     context["ti"].xcom_push(key="alerts_n", value=len(records))
@@ -159,12 +160,17 @@ def detect_and_publish_delay_events(**context):
     """
     Read from fact_trip_updates, find new severe delays,
     publish to delay-events Kafka topic for real-time alerting.
+    Skipped when REDSHIFT_HOST is not configured.
     """
-    from warehouse.redshift_writer import RedshiftWriter
     from kafka import KafkaProducer
     import json, os
     from datetime import timezone
 
+    if not os.getenv("REDSHIFT_HOST"):
+        print("REDSHIFT_HOST not set — skipping delay detection (requires Redshift)")
+        return
+
+    from warehouse.redshift_writer import RedshiftWriter
     rw = RedshiftWriter()
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
