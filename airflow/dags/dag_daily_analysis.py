@@ -314,7 +314,7 @@ with DAG(
     dag_id="dag_daily_analytics",
     default_args=default_args,
     description="Daily KPIs, aggregations, route performance report",
-    schedule_interval=timedelta(seconds=30),   # every 30 seconds
+    schedule_interval=timedelta(hours=24),     # run once per day
     catchup=False,
     max_active_runs=1,
     tags=["analytics", "daily", "transit", "israel"],

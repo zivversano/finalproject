@@ -53,7 +53,7 @@ def fetch_train_positions(**context):
 
 
 def fetch_service_alerts(**context):
-    from producers.service_alerts_producer import ServiceAlertsProducer
+    from producers.service_alert_producer import ServiceAlertsProducer
     producer = ServiceAlertsProducer()
     try:
         producer.run_once()
