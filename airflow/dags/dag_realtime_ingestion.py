@@ -134,11 +134,3 @@ with DAG(
     )
 
     health >> [t_bus, t_trips, t_trains, t_alerts] >> t_validate >> t_minio
-
-    validate = PythonOperator(
-        task_id="validate_ingestion",
-        python_callable=validate_ingestion,
-        trigger_rule=TriggerRule.ALL_DONE,
-    )
-
-    health >> [t_bus, t_trips, t_trains, t_alerts] >> validate

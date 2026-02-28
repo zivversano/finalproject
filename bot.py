@@ -10,7 +10,7 @@ Endpoints:
   GET /stops       - bus stops with nearest stop info
 """
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 
@@ -95,7 +95,7 @@ class BotHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer(("0.0.0.0", BOT_PORT), BotHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", BOT_PORT), BotHandler)
     print(f"🤖 Transit Bot API running on http://0.0.0.0:{BOT_PORT}")
     print(f"   GET /agent     → Agent Transit Dashboard (HTML)")
     print(f"   GET /health    → health check (JSON)")
