@@ -314,7 +314,7 @@ with DAG(
     dag_id="dag_daily_analytics",
     default_args=default_args,
     description="Daily KPIs, aggregations, route performance report",
-    schedule_interval="0 1 * * *",   # 01:00 UTC = 04:00 Israel (after end of service)
+    schedule_interval=timedelta(seconds=30),   # every 30 seconds
     catchup=False,
     max_active_runs=1,
     tags=["analytics", "daily", "transit", "israel"],

@@ -233,7 +233,7 @@ with DAG(
     dag_id="dag_etl_transform",
     default_args=default_args,
     description="Consume Kafka → Transform → S3 + Redshift (every 10 min)",
-    schedule_interval="*/10 * * * *",
+    schedule_interval=timedelta(seconds=30),   # every 30 seconds
     catchup=False,
     max_active_runs=1,
     tags=["etl", "transform", "transit"],
