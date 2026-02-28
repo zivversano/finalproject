@@ -32,6 +32,7 @@ check "Kafka UI"       "http://localhost:8080"
 check "MinIO"          "http://localhost:9000/minio/health/live"
 check "Kibana"         "http://localhost:5601"
 check "Elasticsearch"  "http://localhost:9200"
+check "Bot API"        "http://localhost:5000/health"
 
 echo ""
 echo -e "${BOLD}  📡  APIs חיצוניים (GTFS-RT):${NC}"

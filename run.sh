@@ -344,6 +344,35 @@ except Exception as e:
 EOF
 
 # ─────────────────────────────────────────────────────────────
+#  שלב 11: הפעלת Bot API (פורט 5000)
+# ─────────────────────────────────────────────────────────────
+step "11 — הפעלת Transit Bot API (פורט 5000)"
+
+BOT_PORT=5000
+
+# בדיקה אם הפורט כבר תפוס
+if lsof -i :${BOT_PORT} -t > /dev/null 2>&1; then
+  EXISTING_PID=$(lsof -i :${BOT_PORT} -t)
+  warn "פורט ${BOT_PORT} כבר בשימוש (PID: ${EXISTING_PID}) — מפסיק תהליך ישן..."
+  kill -9 "$EXISTING_PID" 2>/dev/null || true
+  sleep 1
+fi
+
+log "מפעיל Bot API על פורט ${BOT_PORT}..."
+source venv/bin/activate
+nohup python3 bot.py > /tmp/transit_bot.log 2>&1 &
+BOT_PID=$!
+sleep 2
+
+# בדיקה שהבוט עלה
+if curl -sf "http://localhost:${BOT_PORT}/health" > /dev/null 2>&1; then
+  success "Bot API פעיל! PID=${BOT_PID}"
+  success "כתובת: http://localhost:${BOT_PORT}"
+else
+  warn "Bot API לא ענה — בדוק לוגים: tail /tmp/transit_bot.log"
+fi
+
+# ─────────────────────────────────────────────────────────────
 #  סיום — סיכום וקישורים
 # ─────────────────────────────────────────────────────────────
 echo ""
@@ -358,6 +387,7 @@ echo -e "  ${CYAN}Airflow UI${NC}     →  http://localhost:8081  (admin / admin
 echo -e "  ${CYAN}Kafka UI${NC}       →  http://localhost:8080"
 echo -e "  ${CYAN}MinIO Console${NC}  →  http://localhost:9001  (minioadmin / minioadmin123)"
 echo -e "  ${CYAN}Kibana${NC}         →  http://localhost:5601"
+echo -e "  ${CYAN}Bot API${NC}        →  http://localhost:5000  (GET /buses /stops /status)"
 echo ""
 echo -e "${BOLD}  📋  פקודות שימושיות:${NC}"
 echo -e "  ${YELLOW}עצירה:${NC}           docker compose down"

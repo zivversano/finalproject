@@ -1,0 +1,92 @@
+"""
+bot.py
+Simple REST API bot for Israel Public Transit Monitoring Platform.
+Exposes real-time transit data over HTTP on port 5000.
+
+Endpoints:
+  GET /            - health check
+  GET /status      - system status
+  GET /buses       - latest bus positions from bus_positions.json
+  GET /stops       - bus stops with nearest stop info
+"""
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
+
+BOT_PORT = int(os.getenv("BOT_PORT", 5000))
+
+
+def load_json(filename):
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+
+class BotHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+        print(f"[BOT] {self.address_string()} - {format % args}")
+
+    def send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", len(body))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/" or self.path == "/health":
+            self.send_json({"status": "ok", "service": "Israel Transit Bot", "port": BOT_PORT})
+
+        elif self.path == "/status":
+            self.send_json({
+                "status": "running",
+                "service": "Israel Public Transit Monitoring Platform",
+                "endpoints": {
+                    "Airflow UI":    "http://localhost:8081",
+                    "Kafka UI":      "http://localhost:8080",
+                    "MinIO Console": "http://localhost:9001",
+                    "Kibana":        "http://localhost:5601",
+                    "Bot API":       f"http://localhost:{BOT_PORT}",
+                }
+            })
+
+        elif self.path == "/buses":
+            data = load_json("bus_positions.json")
+            self.send_json({"count": len(data), "buses": data[:50]})  # limit to 50
+
+        elif self.path == "/stops":
+            data = load_json("buses_with_nearest_stops.json")
+            self.send_json({"count": len(data), "data": data[:50]})
+
+        else:
+            self.send_json({"error": "Not found", "path": self.path}, status=404)
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.end_headers()
+
+
+def main():
+    server = HTTPServer(("0.0.0.0", BOT_PORT), BotHandler)
+    print(f"🤖 Transit Bot API running on http://0.0.0.0:{BOT_PORT}")
+    print(f"   GET /          → health check")
+    print(f"   GET /status    → system status & service URLs")
+    print(f"   GET /buses     → latest bus positions")
+    print(f"   GET /stops     → buses with nearest stops")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped.")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
