@@ -130,17 +130,28 @@ docker compose pull --quiet 2>/dev/null || true
 log "מנקה קונטיינרים ישנים שעלולים לגרום קונפליקט..."
 docker compose down --remove-orphans 2>/dev/null || true
 
-# Force-remove any containers with conflicting names that may exist outside this project
+# Force-remove only STOPPED/EXITED containers with conflicting names (skip running ones)
 for container in elasticsearch zookeeper kafka minio postgres airflow-webserver airflow-scheduler kibana kafka-ui; do
-  if docker inspect "$container" &>/dev/null; then
-    warn "מסיר קונטיינר קיים: $container"
+  STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "")
+  if [ "$STATUS" = "exited" ] || [ "$STATUS" = "created" ]; then
+    warn "מסיר קונטיינר עצור: $container"
     docker rm -f "$container" 2>/dev/null || true
+  elif [ "$STATUS" = "running" ]; then
+    log "קונטיינר $container כבר רץ — ממשיך"
   fi
 done
 
 log "מפעיל את כל השירותים..."
 docker compose up -d 2>&1 || {
   warn "docker compose up יצא עם שגיאה — בודק מצב קונטיינרים..."
+  # Start any containers that are still in 'created' state
+  for container in elasticsearch zookeeper kafka minio postgres airflow-webserver airflow-scheduler kibana kafka-ui kafka-init; do
+    STATUS=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null || echo "")
+    if [ "$STATUS" = "created" ]; then
+      log "מפעיל ידנית: $container"
+      docker start "$container" 2>/dev/null || true
+    fi
+  done
 }
 
 success "כל הקונטיינרים הועלו"
@@ -155,6 +166,8 @@ step "3 — המתנה לשירותים להיות מוכנים"
 
 wait_for_service "Kafka UI"  "http://localhost:8080"        30
 wait_for_service "MinIO"     "http://localhost:9000/minio/health/live" 20
+log "ממתין ל-Airflow לאתחל את מסד הנתונים (עשוי לקחת 2-3 דקות)..."
+sleep 30
 wait_for_service "Airflow"   "http://localhost:8081/health"  120
 
 # ─────────────────────────────────────────────────────────────
