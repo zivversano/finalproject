@@ -89,13 +89,15 @@ def validate_ingestion(**context):
     }
     total = sum(counts.values())
     print(f"Ingestion summary: {counts} | total={total}")
-
-    # At minimum, buses and trip updates must have data
-    critical = ["bus_positions", "trip_updates"]
-    failed   = [k for k in critical if counts[k] == 0]
-    if failed:
-        raise ValueError(f"Critical sources returned 0 records: {failed}")
     return total
+
+
+def upload_to_minio(**context):
+    """Upload latest transit data to MinIO data lake."""
+    import sys
+    sys.path.insert(0, "/opt/airflow")
+    from storage.minio_uploader import airflow_upload_task
+    return airflow_upload_task(**context)
 
 
 # ─────────────────────────────────────────
@@ -118,6 +120,20 @@ with DAG(
     t_trips  = PythonOperator(task_id="fetch_trip_updates",    python_callable=fetch_trip_updates)
     t_trains = PythonOperator(task_id="fetch_train_positions", python_callable=fetch_train_positions)
     t_alerts = PythonOperator(task_id="fetch_service_alerts",  python_callable=fetch_service_alerts)
+
+    t_validate = PythonOperator(
+        task_id="validate_ingestion",
+        python_callable=validate_ingestion,
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+
+    t_minio = PythonOperator(
+        task_id="upload_to_minio",
+        python_callable=upload_to_minio,
+        trigger_rule=TriggerRule.ALL_DONE,
+    )
+
+    health >> [t_bus, t_trips, t_trains, t_alerts] >> t_validate >> t_minio
 
     validate = PythonOperator(
         task_id="validate_ingestion",

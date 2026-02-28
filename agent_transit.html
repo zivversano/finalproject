@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Israel Transit Agent Dashboard</title>
+  <style>
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --accent:   #1f6feb;
+      --green:    #3fb950;
+      --yellow:   #d29922;
+      --red:      #f85149;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 700; }
+    header h1 span { color: var(--accent); }
+
+    #live-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+    #live-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: .3; }
+    }
+
+    /* ── Layout ── */
+    main { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── Status cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+    }
+    .card .label { font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+    .card .value { font-size: 1.6rem; font-weight: 700; }
+    .card .sub   { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+    .card.ok   { border-top: 3px solid var(--green); }
+    .card.warn { border-top: 3px solid var(--yellow); }
+    .card.err  { border-top: 3px solid var(--red); }
+
+    /* ── Chat panel ── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      font-size: .85rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .panel-body { padding: 16px 18px; }
+
+    /* Chat */
+    #chat-log {
+      height: 300px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-bottom: 8px;
+    }
+    .msg {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: .88rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .msg.user {
+      background: var(--accent);
+      align-self: flex-start;
+      border-radius: 12px 12px 12px 2px;
+    }
+    .msg.bot {
+      background: #21262d;
+      border: 1px solid var(--border);
+      align-self: flex-end;
+      border-radius: 12px 12px 2px 12px;
+    }
+    .msg.bot.loading { color: var(--muted); font-style: italic; }
+
+    #chat-form {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    #chat-input {
+      flex: 1;
+      padding: 10px 14px;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: .9rem;
+      outline: none;
+    }
+    #chat-input:focus { border-color: var(--accent); }
+    #chat-input::placeholder { color: var(--muted); }
+
+    button.send-btn {
+      padding: 10px 18px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: .9rem;
+      font-weight: 600;
+      transition: background .2s;
+    }
+    button.send-btn:hover { background: #388bfd; }
+    button.send-btn:disabled { background: var(--border); cursor: default; }
+
+    /* Suggestions */
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .chip {
+      padding: 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: .78rem;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Bus table */
+    #bus-table-wrap {
+      overflow-x: auto;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      padding: 8px 12px;
+      text-align: right;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #21262d;
+    }
+    tr:hover td { background: #21262d; }
+
+    /* Service status list */
+    .svc-list { display: flex; flex-direction: column; gap: 8px; }
+    .svc-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: .85rem;
+    }
+    .badge {
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .badge.up   { background: #238636; color: #3fb950; }
+    .badge.down { background: #3d1f1f; color: #f85149; }
+    .badge.chk  { background: #2d2003; color: #d29922; }
+
+    /* Grid 2-col */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* refresh btn */
+    .refresh-btn {
+      padding: 4px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: .75rem;
+    }
+    .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🚌 Israel <span>Transit Agent</span></h1>
+  <div id="live-badge">
+    <div id="live-dot"></div>
+    <span id="live-label">מתחבר…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- KPI cards -->
+  <div class="cards" id="kpi-cards">
+    <div class="card" id="card-buses">
+      <div class="label">אוטובוסים פעילים</div>
+      <div class="value" id="kpi-buses">–</div>
+      <div class="sub">בזמן אמת</div>
+    </div>
+    <div class="card" id="card-stops">
+      <div class="label">תחנות ממופות</div>
+      <div class="value" id="kpi-stops">–</div>
+      <div class="sub">מקורב</div>
+    </div>
+    <div class="card" id="card-api">
+      <div class="label">Bot API</div>
+      <div class="value" id="kpi-api" style="font-size:1rem">–</div>
+      <div class="sub">localhost:5000</div>
+    </div>
+    <div class="card" id="card-src">
+      <div class="label">מקור נתונים</div>
+      <div class="value" id="kpi-src" style="font-size:.9rem">–</div>
+      <div class="sub">GTFS-RT / SIRI</div>
+    </div>
+  </div>
+
+  <!-- Chat + Services -->
+  <div class="two-col">
+
+    <!-- Agent Chat -->
+    <div class="panel">
+      <div class="panel-header">
+        🤖 Transit Agent Chat
+        <span style="font-size:.75rem;color:var(--muted)">שאל על נתוני תחבורה</span>
+      </div>
+      <div class="panel-body">
+        <div class="suggestions">
+          <span class="chip" onclick="ask('כמה אוטובוסים פעילים?')">כמה אוטובוסים פעילים?</span>
+          <span class="chip" onclick="ask('קו 1')">קו 1</span>
+          <span class="chip" onclick="ask('קו 480')">קו 480</span>
+          <span class="chip" onclick="ask('תחנה: תל אביב')">תל אביב</span>
+          <span class="chip" onclick="ask('תחנה: רחוב דיזנגוף')">דיזנגוף</span>
+          <span class="chip" onclick="ask('מהירות ממוצעת')">מהירות</span>
+          <span class="chip" onclick="ask('מה מצב השירותים?')">מצב שירותים</span>
+          <span class="chip" onclick="ask('הצג כל הקווים')">כל הקווים</span>
+        </div>
+        <div id="chat-log"></div>
+        <form id="chat-form" onsubmit="handleChat(event)">
+          <input id="chat-input" type="text" placeholder="קו 1 / תחנה: דיזנגוף / כמה אוטובוסים?" autocomplete="off" />
+          <button class="send-btn" type="submit" id="send-btn">שלח</button>
+        </form>
+        <div id="filter-bar" style="display:none;margin-top:10px;padding:7px 12px;background:#21262d;border-radius:8px;font-size:.8rem;align-items:center;justify-content:space-between">
+          <span id="filter-label" style="color:var(--yellow)"></span>
+          <button onclick="clearFilter()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.85rem">✕ נקה</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Service status -->
+    <div class="panel">
+      <div class="panel-header">
+        🔌 מצב שירותים
+        <button class="refresh-btn" onclick="checkServices()">↻ רענן</button>
+      </div>
+      <div class="panel-body">
+        <div class="svc-list" id="svc-list">
+          <div style="color:var(--muted);font-size:.85rem">טוען…</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bus table -->
+  <div class="panel">
+    <div class="panel-header">
+      📍 מיקומי אוטובוסים בזמן אמת
+      <button class="refresh-btn" onclick="loadBuses()">↻ רענן</button>
+    </div>
+    <div class="panel-body">
+      <div id="bus-table-wrap">
+        <table id="bus-table">
+          <thead>
+            <tr>
+              <th>Vehicle ID</th>
+              <th>קו (Route)</th>
+              <th>Trip ID</th>
+              <th>קו רוחב</th>
+              <th>קו אורך</th>
+              <th>מהירות (km/h)</th>
+              <th>כיוון</th>
+              <th>תחנה קרובה</th>
+              <th>מרחק (מ')</th>
+              <th>עדכון</th>
+            </tr>
+          </thead>
+          <tbody id="bus-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const BOT = 'http://localhost:5000';
+
+// ── Utilities ────────────────────────────────────────────────
+async function apiFetch(path) {
+  const r = await fetch(BOT + path);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function setCard(id, cls, val) {
+  const el = document.getElementById(id);
+  if (el) { el.textContent = val; }
+  const card = el?.closest('.card');
+  if (card && cls) { card.className = 'card ' + cls; }
+}
+
+// ── KPI / health ────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const h = await apiFetch('/health');
+    document.getElementById('kpi-api').textContent  = '✅ Online';
+    document.getElementById('card-api').className   = 'card ok';
+    document.getElementById('live-label').textContent = 'מחובר';
+    document.getElementById('live-dot').style.background = 'var(--green)';
+  } catch {
+    document.getElementById('kpi-api').textContent  = '❌ Offline';
+    document.getElementById('card-api').className   = 'card err';
+    document.getElementById('live-label').textContent = 'מנותק';
+    document.getElementById('live-dot').style.background = 'var(--red)';
+  }
+}
+
+// ── Services ────────────────────────────────────────────────
+const SERVICES = [
+  { label: 'Bot API',          url: 'http://localhost:5000/health' },
+  { label: 'Airflow',          url: 'http://localhost:8081/health' },
+  { label: 'Kafka UI',         url: 'http://localhost:8080' },
+  { label: 'MinIO',            url: 'http://localhost:9001' },
+  { label: 'Elasticsearch',    url: 'http://localhost:9200' },
+  { label: 'Kibana',           url: 'http://localhost:5601' },
+];
+
+async function checkServices() {
+  const list = document.getElementById('svc-list');
+  list.innerHTML = '<div style="color:var(--muted);font-size:.85rem">בודק…</div>';
+  const rows = await Promise.all(
+    SERVICES.map(async s => {
+      let ok = false;
+      try { const r = await fetch(s.url, {mode:'no-cors'}); ok = true; }
+      catch { ok = false; }
+      return `<div class="svc-row">
+        <span>${s.label}</span>
+        <span class="badge ${ok ? 'up' : 'down'}">${ok ? 'UP' : 'DOWN'}</span>
+      </div>`;
+    })
+  );
+  list.innerHTML = rows.join('');
+}
+
+// ── Bus table ────────────────────────────────────────────────
+async function loadBuses() {
+  const tbody = document.getElementById('bus-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted);text-align:center">טוען…</td></tr>';
+  try {
+    const buses = await apiFetch('/buses');
+    busCache = buses;  // keep cache in sync
+    setCard('kpi-buses', 'ok', buses.length);
+    if (!buses.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted);text-align:center">אין נתונים</td></tr>';
+      return;
+    }
+    // detect source from first record
+    const src = buses[0].source || 'GTFS-RT';
+    document.getElementById('kpi-src').textContent =
+      src === 'hasadna-siri' ? 'Hasadna SIRI ✅' : 'MOT GTFS-RT';
+
+    renderBusRows(buses);
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--red)">שגיאה: ${e.message}</td></tr>`;
+  }
+}
+
+function renderBusRows(buses) {
+  const tbody = document.getElementById('bus-tbody');
+  if (!buses.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted);text-align:center">אין נתונים</td></tr>';
+    return;
+  }
+  tbody.innerHTML = buses.slice(0, 100).map(b => {
+    const ts   = b.timestamp ? new Date(b.timestamp).toLocaleTimeString('he-IL') : '–';
+    const vel  = b.velocity != null ? Math.round(b.velocity) : '–';
+    const bear = b.bearing  != null ? b.bearing + '°' : '–';
+    const dist = b.distance_to_stop_m != null ? Math.round(b.distance_to_stop_m) : '–';
+    return `<tr>
+      <td>${b.vehicle_id ?? '–'}</td>
+      <td><b>${b.route_id ?? '–'}</b></td>
+      <td>${b.trip_id    ?? '–'}</td>
+      <td>${b.lat != null ? b.lat.toFixed(5) : '–'}</td>
+      <td>${b.lon != null ? b.lon.toFixed(5) : '–'}</td>
+      <td>${vel}</td>
+      <td>${bear}</td>
+      <td>${b.nearest_stop_name ?? '–'}</td>
+      <td>${dist}</td>
+      <td>${ts}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderFilteredTable(matches) {
+  renderBusRows(matches);
+  document.getElementById('bus-table-wrap').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── Chat Agent ───────────────────────────────────────────────
+let busCache = [], stopCache = [];
+let activeFilter = null; // { type, value, matches }
+
+function appendMsg(html, role, isHTML = false) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (isHTML) div.innerHTML = html;
+  else        div.textContent = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+function setFilter(label, matches) {
+  activeFilter = { label, matches };
+  const bar = document.getElementById('filter-bar');
+  document.getElementById('filter-label').textContent = `🔍 מסנן: ${label} (${matches.length} תוצאות)`;
+  bar.style.display = 'flex';
+  renderFilteredTable(matches);
+}
+
+function clearFilter() {
+  activeFilter = null;
+  document.getElementById('filter-bar').style.display = 'none';
+  renderBusRows(busCache);
+}
+
+async function handleChat(e) {
+  e.preventDefault();
+  const input = document.getElementById('chat-input');
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  ask(q);
+}
+
+async function ask(q) {
+  document.getElementById('chat-input').value = '';
+  appendMsg(q, 'user');
+  const loadDiv = appendMsg('חושב…', 'bot loading');
+  document.getElementById('send-btn').disabled = true;
+
+  try {
+    if (!busCache.length)  busCache  = await apiFetch('/buses').catch(() => []);
+    if (!stopCache.length) stopCache = await apiFetch('/stops').catch(() => []);
+    const { text, html } = await agentAnswer(q.trim(), busCache, stopCache);
+    loadDiv.className = 'msg bot';
+    if (html) { loadDiv.innerHTML = html; }
+    else      { loadDiv.textContent = text; }
+  } catch(err) {
+    loadDiv.className = 'msg bot';
+    loadDiv.textContent = `שגיאה: ${err.message}`;
+  }
+  document.getElementById('send-btn').disabled = false;
+}
+
+// Extract leading/trailing number from query (e.g. "קו 1", "אוטובוס 480", "route 5")
+function extractRouteNum(q) {
+  const m = q.match(/(\d+)/);
+  return m ? m[1] : null;
+}
+
+// Fuzzy-match a keyword against an array of buses
+function busesForRoute(buses, routeNum) {
+  return buses.filter(b =>
+    String(b.route_id ?? '').includes(routeNum) ||
+    String(b.vehicle_id ?? '').includes(routeNum) ||
+    String(b.trip_id ?? '').includes(routeNum)
+  );
+}
+
+function busesForStop(buses, keyword) {
+  const kl = keyword.toLowerCase();
+  return buses.filter(b =>
+    (b.nearest_stop_name ?? '').toLowerCase().includes(kl)
+  );
+}
+
+function formatBusList(matches, label) {
+  if (!matches.length) return { text: `לא נמצאו אוטובוסים בשביל "${label}".` };
+  const lines = matches.slice(0, 10).map(b =>
+    `• ID ${b.vehicle_id} | קו ${b.route_id} | ${b.lat?.toFixed(4)},${b.lon?.toFixed(4)} | ${b.nearest_stop_name ?? '–'} (${b.distance_to_stop_m != null ? Math.round(b.distance_to_stop_m)+'מ\'' : '–'})`
+  );
+  const extra = matches.length > 10 ? `\n+${matches.length-10} נוספים` : '';
+  return { text: `נמצאו ${matches.length} אוטובוסים (${label}):\n` + lines.join('\n') + extra };
+}
+
+// Geocode an Israeli address using Nominatim and find nearest buses
+async function geocodeAndFindBuses(address, buses) {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address + ', Israel')}&format=json&limit=1`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'he' } });
+  const data = await resp.json();
+  if (!data.length) return null;
+
+  const lat = parseFloat(data[0].lat);
+  const lon = parseFloat(data[0].lon);
+  const displayName = data[0].display_name.split(',')[0];
+
+  // calculate dist from address to each bus
+  function haversine(la1, lo1, la2, lo2) {
+    const R = 6371000, rad = Math.PI/180;
+    const dLat = (la2-la1)*rad, dLon = (lo2-lo1)*rad;
+    const a = Math.sin(dLat/2)**2 + Math.cos(la1*rad)*Math.cos(la2*rad)*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+
+  const withDist = buses
+    .filter(b => b.lat != null && b.lon != null)
+    .map(b => ({ ...b, _addrDist: haversine(lat, lon, b.lat, b.lon) }))
+    .sort((a,b) => a._addrDist - b._addrDist)
+    .slice(0, 10);
+
+  return { displayName, lat, lon, withDist };
+}
+
+async function agentAnswer(q, buses, stops) {
+  const lq = q.toLowerCase();
+
+  // ── Bus / Route number search ────────────────────────────
+  const isRouteQuery = /קו|route|אוטובוס\s*\d|bus\s*\d|מספר קו/.test(lq);
+  const routeNum = extractRouteNum(q);
+
+  if (isRouteQuery && routeNum) {
+    const matches = busesForRoute(buses, routeNum);
+    setFilter(`קו ${routeNum}`, matches);
+    if (!matches.length)
+      return { text: `לא נמצאו אוטובוסים פעילים בקו ${routeNum} כרגע.\nנסה קו אחר או בדוק מאוחר יותר.` };
+    const first = matches[0];
+    const speeds = matches.map(b=>b.velocity).filter(v=>v!=null&&v>0);
+    const avgSpd = speeds.length ? (speeds.reduce((a,b)=>a+b,0)/speeds.length).toFixed(1) : '–';
+    const lines = matches.slice(0,8).map(b=>
+      `• רכב ${b.vehicle_id} | ${b.lat?.toFixed(4)},${b.lon?.toFixed(4)} | תחנה: ${b.nearest_stop_name??'–'}`
+    );
+    return { text:
+      `קו ${routeNum} — ${matches.length} אוטובוסים פעילים:\n` +
+      lines.join('\n') +
+      (matches.length>8 ? `\n+${matches.length-8} נוספים` : '') +
+      `\nמהירות ממוצעת: ${avgSpd} קמ"ש`
+    };
+  }
+
+  // ── Address / stop name search ───────────────────────────
+  // Patterns: "תחנה: X", "כתובת: X", "ליד X", "באיזור X", "בXX"
+  const addrMatch = q.match(/(?:תחנה|כתובת|ליד|באיזור|near|address|stop)[:：\s]+(.+)/i)
+                 || q.match(/^([\u0590-\u05FF\w][\u0590-\u05FF\w\s,]{3,})$/);
+
+  if (addrMatch) {
+    const keyword = (addrMatch[1] ?? addrMatch[0]).trim();
+
+    // 1) first try local stop-name match
+    const stopMatches = busesForStop(buses, keyword);
+    if (stopMatches.length) {
+      setFilter(`תחנה: ${keyword}`, stopMatches);
+      const lines = stopMatches.slice(0,8).map(b=>
+        `• קו ${b.route_id} | רכב ${b.vehicle_id} | מרחק ${b.distance_to_stop_m!=null?Math.round(b.distance_to_stop_m)+'מ\'':'–'}`
+      );
+      return { text:
+        `נמצאו ${stopMatches.length} אוטובוסים ליד "${keyword}":\n` +
+        lines.join('\n') +
+        (stopMatches.length>8 ? `\n+${stopMatches.length-8} נוספים` : '')
+      };
+    }
+
+    // 2) geocode via Nominatim
+    try {
+      const geo = await geocodeAndFindBuses(keyword, buses);
+      if (geo && geo.withDist.length) {
+        setFilter(`ליד ${geo.displayName}`, geo.withDist);
+        const lines = geo.withDist.slice(0,8).map(b=>
+          `• קו ${b.route_id} | רכב ${b.vehicle_id} | ${Math.round(b._addrDist)}מ' מהכתובת | תחנה: ${b.nearest_stop_name??'–'}`
+        );
+        return { text:
+          `אוטובוסים הקרובים ל"${geo.displayName}":\n` +
+          lines.join('\n')
+        };
+      } else if (geo) {
+        return { text: `מצאתי את הכתובת "${geo.displayName}" אבל אין אוטובוסים בקרבת מקום כרגע.` };
+      }
+    } catch(e) { /* geocoding unavailable */ }
+
+    return { text: `לא נמצאו תוצאות עבור "${keyword}".\nנסה שם תחנה, קו מספר (קו 1), או כתובת ידועה.` };
+  }
+
+  // ── Count ───────────────────────────────────────────────
+  if (/כמה|how many|מספר/.test(lq))
+    return { text: `ישנם ${buses.length} אוטובוסים פעילים כרגע במערכת.` };
+
+  // ── All routes list ─────────────────────────────────────
+  if (/כל הקוו|all route|רשימת קוו/.test(lq)) {
+    const routes = [...new Set(buses.map(b=>b.route_id).filter(Boolean))].sort();
+    return { text: `קווים פעילים (${routes.length}):\n${routes.slice(0,40).join(', ')}${routes.length>40?'…':''}` };
+  }
+
+  // ── Speed ───────────────────────────────────────────────
+  if (/מהירות|speed|velocity/.test(lq)) {
+    const speeds = buses.map(b=>b.velocity).filter(v=>v!=null&&v>0);
+    if (!speeds.length) return { text: 'אין נתוני מהירות זמינים כרגע.' };
+    const avg = (speeds.reduce((a,b)=>a+b,0)/speeds.length).toFixed(1);
+    const max = Math.max(...speeds).toFixed(1);
+    return { text: `מהירות ממוצעת: ${avg} קמ"ש\nמהירות מקסימלית: ${max} קמ"ש\n(מתוך ${speeds.length} כלי רכב)` };
+  }
+
+  // ── Nearest stop to me ──────────────────────────────────
+  if (/קרוב|nearest|ליד/.test(lq)) {
+    const withStop = buses.filter(b=>b.nearest_stop_name)
+      .sort((a,b)=>(a.distance_to_stop_m??Infinity)-(b.distance_to_stop_m??Infinity));
+    if (!withStop.length) return { text: 'אין נתוני תחנה קרובה זמינים.' };
+    const b = withStop[0];
+    return { text: `האוטובוס הקרוב ביותר לתחנה:\n• ID: ${b.vehicle_id}\n• קו: ${b.route_id}\n• תחנה: ${b.nearest_stop_name}\n• מרחק: ${Math.round(b.distance_to_stop_m)}מ'` };
+  }
+
+  // ── Status ──────────────────────────────────────────────
+  if (/סטטוס|status|שירות|מצב/.test(lq))
+    return { text: `מצב המערכת:\n• Bot API: פעיל ✅\n• אוטובוסים: ${buses.length}\n• מקור: ${buses[0]?.source ?? '–'}` };
+
+  // ── Source ──────────────────────────────────────────────
+  if (/מקור|source|api|siri|gtfs/.test(lq)) {
+    const src = buses[0]?.source;
+    return { text: src === 'hasadna-siri'
+      ? 'הנתונים מגיעים מ-Hasadna Open Bus SIRI API ✅\n(MOT GTFS-RT לא זמין — מחזיר עמוד שגיאה)'
+      : `מקור נתונים: ${src ?? 'לא ידוע'}` };
+  }
+
+  // ── Help ────────────────────────────────────────────────
+  return { html:
+    `<b>שלום! אני סוכן התחבורה 🚌</b><br>אני יכול לענות על:<br>` +
+    `• <span class="chip" onclick="ask('קו 1')" style="cursor:pointer">קו 1</span> — חיפוש לפי מספר קו<br>` +
+    `• <span class="chip" onclick="ask('תחנה: דיזנגוף')" style="cursor:pointer">תחנה: דיזנגוף</span> — חיפוש לפי שם תחנה או כתובת<br>` +
+    `• <span class="chip" onclick="ask('כמה אוטובוסים פעילים?')" style="cursor:pointer">כמה אוטובוסים?</span> — סטטיסטיקה כללית<br>` +
+    `• <span class="chip" onclick="ask('מהירות ממוצעת')" style="cursor:pointer">מהירות</span> — נתוני מהירות<br>` +
+    `• <span class="chip" onclick="ask('הצג כל הקווים')" style="cursor:pointer">כל הקווים</span> — רשימת קווים פעילים`
+  };
+}
+
+// ── Stop count from /stops endpoint ──────────────────────────
+async function loadStopCount() {
+  try {
+    const stops = await apiFetch('/stops');
+    setCard('kpi-stops', 'ok', stops.length);
+  } catch { setCard('kpi-stops', 'warn', '–'); }
+}
+
+// ── Boot ────────────────────────────────────────────────────
+(async function init() {
+  await loadHealth();
+  await Promise.all([loadBuses(), loadStopCount(), checkServices()]);
+  // auto-refresh every 30s
+  setInterval(async () => {
+    busCache = []; stopCache = [];
+    await loadHealth();
+    await Promise.all([loadBuses(), loadStopCount()]);
+  }, 30000);
+})();
+</script>
+
+</body>
+</html>
