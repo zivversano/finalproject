@@ -662,9 +662,11 @@ button {
   <div id="panel-content">
     <!-- Home tab -->
     <div id="tab-home">
-      <div id="live-bar" class="live-bar" style="display:none">
+      <div id="live-bar" class="live-bar" style="display:none;cursor:pointer"
+           onclick="showActiveLines()" title="הקש לרשימת הקווים הפעילים">
         <div class="live-dot"></div>
         <span id="live-count">טוען נתוני זמן אמת...</span>
+        <span style="margin-inline-start:auto;font-size:0.72rem;opacity:.75">קווים פעילים ›</span>
       </div>
 
       <div class="section-title">פעולות מהירות</div>
@@ -905,6 +907,46 @@ function loadOperatorLines(opId, opName) {
     })
     .catch(() => renderResults(`<div class="empty-state"><div class="icon">⚠️</div>
       <div>שגיאה בטעינת קווים</div></div>`));
+}
+
+// ── Active lines (from the live-bar) ──────────────────────────────
+// Lists the SAME lines that produced the "N כלי רכב פעילים" count
+// (window._activeLines is built in renderVehicles), so the count and
+// the list are always consistent. Tapping a line opens its stops via
+// the existing showLineDetail() flow.
+function showActiveLines() {
+  const lines = window._activeLines || [];
+  showResultsTab('קווים פעילים עכשיו',
+    `<div class="loader"><div class="spinner"></div>טוען קווים פעילים...</div>`);
+  if (!lines.length) {
+    renderResults(`<div class="empty-state"><div class="icon">🚏</div>
+      <div style="font-weight:600;font-size:1rem">אין כרגע קווים פעילים</div>
+      <div style="font-size:0.75rem;margin-top:8px;color:var(--text-muted)">
+        נתונים מתעדכנים כל 30 שניות — נסי שוב בעוד רגע</div></div>`);
+    setTitle('אין קווים פעילים');
+    return;
+  }
+  const total = lines.reduce((s, l) => s + l.count, 0);
+  let html = `<div style="font-size:0.78rem;color:var(--text-muted);margin:10px 0 8px">
+    🟢 ${lines.length} קווים פעילים · ${total} כלי רכב — נתוני GPS בזמן אמת.
+    הקישי על קו לצפייה בתחנות שלו</div>`;
+  html += lines.map(l => {
+    const col = l.col || OP_COLORS[l.agency_id] || '#00B1D2';
+    const badge = String(l.route_short_name).slice(0, 5);
+    const sub = [l.agency_name, `${l.count} כלי רכב פעילים`]
+                  .filter(Boolean).join(' · ');
+    return `<div class="route-card" style="--cc:${col}"
+      onclick="showLineDetail('${escHtml(l.route_id)}','${escHtml(l.route_short_name)}','${col}','${escHtml(l.agency_id)}')">
+      <div class="line-badge" style="background:${col}">${escHtml(badge)}</div>
+      <div class="route-info">
+        <div class="route-name">קו ${escHtml(l.route_short_name)}</div>
+        <div class="route-sub">${escHtml(sub)}</div>
+      </div>
+      <div class="route-badge">${l.count} 🚌</div>
+    </div>`;
+  }).join('');
+  renderResults(html);
+  setTitle(`קווים פעילים — ${lines.length}`);
 }
 
 function renderResults(html) {
@@ -1331,6 +1373,7 @@ function getOpId(opName) {
 // ── Live vehicles ─────────────────────────────────────────────────
 function renderVehicles(data) {
   vehicleMarkers.forEach(m => map.removeLayer(m)); vehicleMarkers = [];
+  const lineGroups = {};            // key = op|line → aggregated line
   data.forEach(b => {
     const lat = parseFloat(b.lat || b.calculated_lat || b.latitude || 0);
     const lon = parseFloat(b.lon || b.calculated_lon || b.longitude || 0);
@@ -1347,7 +1390,25 @@ function renderVehicles(data) {
     const opName = OP_NAMES[op] || '';
     mk.bindTooltip(`קו ${ln}${opName ? ' — ' + opName : ''}`, { direction: 'top' });
     vehicleMarkers.push(mk);
+
+    // Group by line so the live-bar can list the SAME active lines
+    // that produced the count (consistent source — fixes the
+    // "46 active but no lines" mismatch).
+    if (ln) {
+      const lref = b.line_ref || b.siri_route__line_ref || ln;
+      const key = op + '|' + ln;
+      if (!lineGroups[key]) {
+        lineGroups[key] = {
+          route_id: lref, route_short_name: String(ln),
+          route_long_name: '', agency_id: op,
+          agency_name: opName, count: 0, col,
+        };
+      }
+      lineGroups[key].count++;
+    }
   });
+  window._activeLines = Object.values(lineGroups)
+    .sort((a, b) => b.count - a.count);
 
   const liveBar = document.getElementById('live-bar');
   const liveCount = document.getElementById('live-count');
