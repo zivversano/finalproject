@@ -2,49 +2,13 @@
   {
     "segment_id": "",
     "description": "",
-    "lat": 31.98973,
-    "lon": 34.907,
-    "speed_kmh": 15.833334,
-    "free_flow_kmh": 22.5,
+    "lat": 32.05603,
+    "lon": 34.78484,
+    "speed_kmh": 9.444445,
+    "free_flow_kmh": 27.222223,
     "jam_factor": 5.0,
     "congestion": "free",
-    "collected_at": "2026-05-17T22:38:07.152575+00:00",
-    "source": "github-actions"
-  },
-  {
-    "segment_id": "",
-    "description": "",
-    "lat": 32.04689,
-    "lon": 34.78772,
-    "speed_kmh": 5.555556,
-    "free_flow_kmh": 11.666667,
-    "jam_factor": 5.0,
-    "congestion": "free",
-    "collected_at": "2026-05-17T22:38:07.152575+00:00",
-    "source": "github-actions"
-  },
-  {
-    "segment_id": "",
-    "description": "",
-    "lat": 32.04758,
-    "lon": 34.79434,
-    "speed_kmh": 8.333334,
-    "free_flow_kmh": 11.666667,
-    "jam_factor": 5.0,
-    "congestion": "free",
-    "collected_at": "2026-05-17T22:38:07.152575+00:00",
-    "source": "github-actions"
-  },
-  {
-    "segment_id": "",
-    "description": "",
-    "lat": 31.97407,
-    "lon": 34.80693,
-    "speed_kmh": 0.5555556,
-    "free_flow_kmh": 13.888889,
-    "jam_factor": 9.0,
-    "congestion": "free",
-    "collected_at": "2026-05-17T22:38:07.152575+00:00",
+    "collected_at": "2026-05-17T23:05:29.796856+00:00",
     "source": "github-actions"
   },
   {
@@ -52,11 +16,11 @@
     "description": "",
     "lat": 31.95894,
     "lon": 34.80223,
-    "speed_kmh": 1.388889,
+    "speed_kmh": 3.3333335,
     "free_flow_kmh": 15.0,
     "jam_factor": 9.0,
     "congestion": "free",
-    "collected_at": "2026-05-17T22:38:07.152575+00:00",
+    "collected_at": "2026-05-17T23:05:29.796856+00:00",
     "source": "github-actions"
   }
 ]
