@@ -1358,22 +1358,33 @@ class BotHandler(BaseHTTPRequestHandler):
             else:
                 try:
                     import requests as _rq
+                    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                    # Real-time window: a vehicle that reported its location in
+                    # the last 20 min IS "active now" (same definition Moovit /
+                    # Google use). The previous code filtered on velocity>0,
+                    # but Stride SIRI almost never populates velocity (bus at a
+                    # stop / in traffic / feed omits it) so every line was
+                    # wrongly dropped → "no active lines".
+                    _since = (_dt.now(_tz.utc) - _td(minutes=20)).strftime(
+                        "%Y-%m-%dT%H:%M:%S+00:00")
                     raw = _rq.get(
                         f"{HASADNA_URL}/siri_vehicle_locations/list",
                         params={
                             "siri_routes__operator_ref": operator_ref,
+                            "recorded_at_time_from": _since,
                             "lat__greater_or_equal": 31.87,
                             "lat__lower_or_equal":   32.21,
                             "lon__greater_or_equal": 34.72,
                             "lon__lower_or_equal":   34.95,
-                            "limit": 500,
-                            "order_by": "id desc",
+                            "limit": 800,
+                            "order_by": "recorded_at_time desc",
                         },
                         timeout=12,
                         headers={"User-Agent": "IsraelTransitBot/1.0"},
                     ).json()
                     seen = {}
-                    line_velocity = {}  # line_ref → max velocity seen
+                    line_vehicles = {}  # line_ref → count of live vehicles
+                    line_velocity = {}  # line_ref → max velocity seen (info only)
                     if isinstance(raw, list):
                         for v in raw:
                             lr  = str(v.get("siri_route__line_ref") or "").strip()
@@ -1382,7 +1393,7 @@ class BotHandler(BaseHTTPRequestHandler):
                             vel = int(v.get("velocity") or 0)
                             if not lr:
                                 continue
-                            # Track max velocity per line
+                            line_vehicles[lr] = line_vehicles.get(lr, 0) + 1
                             if vel > line_velocity.get(lr, 0):
                                 line_velocity[lr] = vel
                             if rsn:
@@ -1395,23 +1406,27 @@ class BotHandler(BaseHTTPRequestHandler):
                                     "agency_id":        operator_ref,
                                     "agency_name":      (qs.get("op_name") or [""])[0] or operator_ref,
                                 }
-                    # Filter to only lines with at least one moving vehicle (real "active")
-                    active_routes = [
-                        r for lr, r in seen.items()
-                        if line_velocity.get(lr, 0) > 0
-                    ]
-                    # Attach max_velocity for each line (so frontend can show "live" badge)
+                    # Every line that has a vehicle reporting a location in the
+                    # last 20 min IS active (Moovit/Google definition). Do NOT
+                    # filter on velocity — Stride rarely reports it.
+                    active_routes = list(seen.values())
                     for r in active_routes:
-                        r["max_velocity"] = line_velocity.get(r["route_id"], 0)
+                        lr = r["route_id"]
+                        r["vehicle_count"] = line_vehicles.get(lr, 0)
+                        r["max_velocity"]  = line_velocity.get(lr, 0)
+                    # Most vehicles on the road first, then numeric line order
                     routes = sorted(
                         active_routes,
-                        key=lambda x: int(x["route_short_name"]) if x["route_short_name"].isdigit() else 9999
+                        key=lambda x: (
+                            -x["vehicle_count"],
+                            int(x["route_short_name"]) if x["route_short_name"].isdigit() else 9999,
+                        )
                     )
                     self.send_json({
                         "routes": routes,
                         "count":  len(routes),
                         "total_lines_seen": len(seen),
-                        "source": "stride_realtime_active_only",
+                        "source": "stride_realtime_20min",
                     })
                 except Exception as e:
                     self.send_json({"error": str(e), "routes": []}, status=500)
