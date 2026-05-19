@@ -370,6 +370,10 @@ services:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
     container_name: elasticsearch
     restart: "no"
+    # ES runs on Elastic Cloud now (the VM can't host it — caused OOM).
+    # Behind a profile so `docker compose up` skips it; opt in with
+    # `docker compose --profile es-local up` only if local ES is needed.
+    profiles: ["es-local"]
     networks: [transit_net]
     mem_limit: 700m
     environment:
@@ -394,6 +398,9 @@ services:
     image: docker.elastic.co/kibana/kibana:8.8.0
     container_name: kibana
     restart: "no"
+    # Kibana is on Elastic Cloud now — local one behind the same profile
+    # so it (and its elasticsearch dependency) never block `compose up`.
+    profiles: ["es-local"]
     networks: [transit_net]
     mem_limit: 512m
     depends_on:
