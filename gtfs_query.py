@@ -397,21 +397,27 @@ def get_nearby_stops(lat: float, lon: float, radius_m: int = 500) -> list[dict]:
 
 def get_routes_at_stop(stop_id: str) -> list[dict]:
     """מחזיר כל הקווים שעוברים בתחנה מסוימת."""
+    # Wrap in subquery so ORDER BY can reference computed sort key
+    # (SELECT DISTINCT requires ORDER BY columns to be in select list)
     return _q("""
-        SELECT DISTINCT
-            r.route_id,
-            r.route_short_name,
-            r.route_long_name,
-            a.agency_name
-        FROM gtfs.stop_times st
-        JOIN gtfs.trips  t ON t.trip_id  = st.trip_id
-        JOIN gtfs.routes r ON r.route_id = t.route_id
-        LEFT JOIN gtfs.agency a ON a.agency_id = r.agency_id
-        WHERE st.stop_id = %s
+        SELECT route_id, route_short_name, route_long_name, agency_name, agency_id
+        FROM (
+            SELECT DISTINCT
+                r.route_id,
+                r.route_short_name,
+                r.route_long_name,
+                r.agency_id,
+                a.agency_name
+            FROM gtfs.stop_times st
+            JOIN gtfs.trips  t ON t.trip_id  = st.trip_id
+            JOIN gtfs.routes r ON r.route_id = t.route_id
+            LEFT JOIN gtfs.agency a ON a.agency_id = r.agency_id
+            WHERE st.stop_id = %s
+        ) sub
         ORDER BY
-            CASE WHEN r.route_short_name ~ '^[0-9]+$'
-                 THEN r.route_short_name::integer ELSE NULL END NULLS LAST,
-            r.route_short_name
+            CASE WHEN route_short_name ~ '^[0-9]+$'
+                 THEN route_short_name::integer ELSE NULL END NULLS LAST,
+            route_short_name
         LIMIT 50
     """, (stop_id,))
 
