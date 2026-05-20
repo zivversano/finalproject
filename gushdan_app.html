@@ -253,6 +253,19 @@ html,body{height:100%;font-family:'Segoe UI',-apple-system,Arial,sans-serif;
       <span style="font-size:18px">🔍</span>
       <span>לאן תרצה להגיע?</span>
     </div>
+    <div style="background:var(--card);border-radius:24px;box-shadow:var(--shadow);
+                display:flex;align-items:center;gap:6px;padding:4px 6px 4px 12px;
+                border:1.5px solid var(--border)">
+      <span style="font-size:16px">🚌</span>
+      <input id="line-search" type="number" inputmode="numeric"
+             placeholder="חפש לפי מספר קו (לדוגמה: 5)"
+             onkeydown="if(event.key==='Enter')searchLineByNumber()"
+             style="flex:1;border:none;background:none;font-size:14px;outline:none;color:var(--text);direction:rtl;padding:8px 0"/>
+      <button onclick="searchLineByNumber()"
+              style="background:var(--dankal);color:#fff;border:none;border-radius:18px;
+                     padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer">חפש</button>
+    </div>
+    <div id="op-row" style="display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px"></div>
     <div id="quick-row">
       <button class="qbtn" onclick="goSaved('home')">🏠 בית</button>
       <button class="qbtn" onclick="goSaved('work')">💼 עבודה</button>
@@ -384,7 +397,7 @@ html,body{height:100%;font-family:'Segoe UI',-apple-system,Arial,sans-serif;
   <button class="ni on" id="ni-home"   onclick="showScreen('home')">  <span class="ni-ico">🗺️</span><span>מפה</span></button>
   <button class="ni"    id="ni-route"  onclick="showScreen('route')"> <span class="ni-ico">🔍</span><span>מסלול</span></button>
   <button class="ni"    id="ni-dankal" onclick="showScreen('dankal')"><span class="ni-ico">🚊</span><span>דנקל</span></button>
-  <button class="ni"    id="ni-depart" onclick="openNearest()">       <span class="ni-ico">📋</span><span>עזיבות</span></button>
+  <button class="ni"    id="ni-depart" onclick="openNearest()">       <span class="ni-ico">📋</span><span>לו"ז קרוב</span></button>
   <button class="ni"    id="ni-fav"    onclick="showScreen('fav')">   <span class="ni-ico">⭐</span><span>מועדפים</span></button>
 </nav>
 
@@ -413,7 +426,8 @@ html,body{height:100%;font-family:'Segoe UI',-apple-system,Arial,sans-serif;
 // ══════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════
-const BBOX = {latMin:31.97,latMax:32.19,lonMin:34.73,lonMax:34.93};
+// Wider Gush Dan — includes Holon, Rishon north, airport, Or Yehuda, Petach Tikva
+const BBOX = {latMin:31.92,latMax:32.21,lonMin:34.72,lonMax:34.99};
 const REFRESH_MS = 15000;  // live data refresh interval
 const TA   = [32.0853, 34.7818];
 const OPS  = {
@@ -484,6 +498,7 @@ function showScreen(id){
 
   if(id==='home') {
     if(!homeMap) initHomeMap();
+    renderOpFilter();
     if(!homeTimer) homeTimer=setInterval(()=>loadNearby(uLat,uLon), REFRESH_MS);
   }
   if(id==='dankal') {
@@ -507,13 +522,20 @@ function initHomeMap(){
 
   if(navigator.geolocation){
     navigator.geolocation.getCurrentPosition(p=>{
-      uLat=p.coords.latitude; uLon=p.coords.longitude;
-      if(inBbox(uLat,uLon)){
+      const la=p.coords.latitude, lo=p.coords.longitude;
+      if(inBbox(la,lo)){
+        uLat=la; uLon=lo;
         homeMap.setView([uLat,uLon],15);
         L.circleMarker([uLat,uLon],{radius:9,color:'#2196F3',
           fillColor:'#2196F3',fillOpacity:1,weight:3,opacity:.4}).addTo(homeMap);
+        loadNearby(uLat,uLon);
+      } else {
+        // User outside Gush Dan — fall back to TA center
+        uLat=TA[0]; uLon=TA[1];
+        homeMap.setView(TA,14);
+        showToast('מחוץ לגוש דן — מציג מרכז תל אביב');
+        loadNearby(uLat,uLon);
       }
-      loadNearby(uLat,uLon);
     },()=>loadNearby(TA[0],TA[1]));
   } else { loadNearby(TA[0],TA[1]); }
 
@@ -557,22 +579,38 @@ async function loadNearby(lat,lon){
 async function loadVehicles(lat,lon){
   vMarkers.forEach(m=>m.remove()); vMarkers=[];
   try{
-    const r=0.006;
-    const res=await fetch(`/proxy/stride/siri_vehicle_locations/list?lat__greater_or_equal=${lat-r}&lat__lower_or_equal=${lat+r}&lon__greater_or_equal=${lon-r}&lon__lower_or_equal=${lon+r}&limit=40&order_by=id+desc`);
+    // Wider radius (~2 km) so the map always shows several buses, even when
+    // user is at the edge of Gush Dan. Then we further filter to bbox.
+    const r=0.018;
+    const params=[
+      `lat__greater_or_equal=${lat-r}`,
+      `lat__lower_or_equal=${lat+r}`,
+      `lon__greater_or_equal=${lon-r}`,
+      `lon__lower_or_equal=${lon+r}`,
+      'limit=80','order_by=id+desc'
+    ];
+    if(activeOpFilter) params.push(`siri_routes__operator_ref=${activeOpFilter}`);
+    const res=await fetch(`/proxy/stride/siri_vehicle_locations/list?${params.join('&')}`);
     const vehs=await res.json();
     if(!Array.isArray(vehs)) return;
+    let shown=0;
     for(const v of vehs){
       const vla=parseFloat(v.lat||v.calculated_lat||0);
       const vlo=parseFloat(v.lon||v.calculated_lon||0);
       if(!vla||!vlo||!inBbox(vla,vlo)) continue;
-      const op=OPS[String(v.siri_route__operator_ref||'')]||{col:'#888'};
-      // מציג שם קו קריא (כגון "63") במקום מספר פנימי (כגון "16542")
+      const opId=String(v.siri_route__operator_ref||'');
+      if(activeOpFilter && opId!==activeOpFilter) continue;
+      const op=OPS[opId]||{col:'#888',name:''};
       const ln=v.siri_route__gtfs_route__route_short_name||v.siri_route__line_ref||'?';
-      const icon=L.divIcon({html:`<div style="background:${op.col};color:#fff;font-size:11px;font-weight:800;padding:2px 6px;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.3)">${ln}</div>`,className:'',iconAnchor:[16,9]});
+      const lr=v.siri_route__line_ref||'';
+      const icon=L.divIcon({html:`<div style="background:${op.col};color:#fff;font-size:11px;font-weight:800;padding:2px 6px;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:pointer">${ln}</div>`,className:'',iconAnchor:[16,9]});
       const m=L.marker([vla,vlo],{icon,zIndexOffset:100}).addTo(homeMap);
-      m.bindPopup(`<b>קו ${ln}</b><br>${op.name||''}<br><small style="color:#999">#${v.siri_route__line_ref||''}</small>`);
+      m.bindPopup(`<b>קו ${ln}</b><br>${op.name||''}<br><small style="color:#999">#${lr}</small><br><a href="#" onclick="event.preventDefault();homeMap.closePopup();startNav({line:'${ln}',lineName:'${ln}',lineRef:'${lr}',op:'${op.name||''}',col:'${op.col}'})" style="color:${op.col};font-weight:700">📍 צפה בקו →</a>`);
       vMarkers.push(m);
+      shown++;
     }
+    const cnt=document.getElementById('vehicle-count');
+    if(cnt) cnt.textContent=shown?`🟢 ${shown} אוטובוסים`:'';
   } catch(e){}
 }
 
@@ -687,6 +725,63 @@ async function planRoute(){
 }
 
 function getOpByName(name){ return Object.values(OPS).find(o=>o.name===name)||null; }
+
+// ══════════════════════════════════
+// LINE NUMBER SEARCH (top of home)
+// ══════════════════════════════════
+async function searchLineByNumber(){
+  const inp=document.getElementById('line-search');
+  const num=(inp.value||'').trim();
+  if(!num){ inp.focus(); return; }
+  showToast('מחפש קו '+num+'…');
+  try{
+    const r=await fetch(`/gtfs/routes?q=${encodeURIComponent(num)}&limit=20`);
+    const d=await r.json();
+    const routes=(d.routes||[]).filter(rt=>String(rt.route_short_name||'').trim()===num);
+    if(!routes.length){ showToast('לא נמצא קו '+num+' בגוש דן'); return; }
+    // Take first match — open the line tracking view
+    const rt=routes[0];
+    const opId=String(rt.agency_id||'');
+    const op=OPS[opId]||{col:'#888',name:rt.agency_name||''};
+    startNav({
+      line:        rt.route_short_name,
+      lineName:    rt.route_short_name,
+      lineRef:     rt.route_id,
+      op:          op.name,
+      operator_ref: opId,
+      stop:        '',
+      originStopId:'',
+      destStopId:  '',
+      col:         op.col
+    });
+  } catch(e){ showToast('שגיאה: '+e.message); }
+}
+
+// ══════════════════════════════════
+// OPERATOR FILTER CHIPS (top of home)
+// ══════════════════════════════════
+let activeOpFilter='';  // '' = all; otherwise operator_id
+function renderOpFilter(){
+  const el=document.getElementById('op-row');
+  if(!el) return;
+  const top=['','3','5','6','15','18','21','25'];  // empty=all, then big operators
+  el.innerHTML=top.map(id=>{
+    const op=id?OPS[id]:{col:'#1C2B3A',name:'הכל'};
+    if(!op) return '';
+    const active=activeOpFilter===id;
+    return `<button class="qbtn" onclick="toggleOpFilter('${id}')"
+              style="border:2px solid ${active?op.col:'transparent'};
+                     color:${active?op.col:'var(--text)'};
+                     font-weight:${active?800:600}">
+              ${id?'🚌 ':''}${esc(op.name)}
+            </button>`;
+  }).join('');
+}
+function toggleOpFilter(id){
+  activeOpFilter=(activeOpFilter===id)?'':id;
+  renderOpFilter();
+  loadVehicles(uLat,uLon);  // re-render map with new filter
+}
 
 // ══════════════════════════════════
 // NAVIGATION
