@@ -24,19 +24,15 @@ jobs:
         run: pip install requests python-dotenv
 
       - name: Collect transit data
-        env:
-          HERE_API_KEY: aA-oKmUbysYkQVjd1zoCkykr_wU9laXvEldsvT_KcYA
         run: |
           python - <<'PYEOF'
           import json
-          import os
           import sys
           from datetime import datetime, timezone
           from pathlib import Path
 
           import requests
 
-          HERE_API_KEY = os.environ.get("HERE_API_KEY", "")
           STRIDE_URL = "https://open-bus-stride-api.hasadna.org.il"
           OUTPUT_DIR = Path("data-buffer")
           OUTPUT_DIR.mkdir(exist_ok=True)
@@ -87,73 +83,19 @@ jobs:
           except Exception as e:
               print(f"Bus fetch failed: {e}", file=sys.stderr)
 
-          # ── Fetch traffic (Gush Dan bbox only for Actions — lighter) ──────
-          traffic = []
-          if HERE_API_KEY:
-              try:
-                  r = requests.get(
-                      "https://data.traffic.hereapi.com/v7/flow",
-                      params={
-                          "apiKey":              HERE_API_KEY,
-                          "in":                  "bbox:34.73,31.97,34.93,32.19",
-                          "locationReferencing": "shape",
-                          "lang":                "en-US",
-                      },
-                      timeout=25,
-                  )
-                  if r.status_code == 401:
-                      print("HERE API: Invalid API key (401)", file=sys.stderr)
-                  elif r.status_code == 429:
-                      print("HERE API: Rate limit (429)", file=sys.stderr)
-                  else:
-                      r.raise_for_status()
-                      CONGESTION_MAP = {1: "free", 2: "minor", 3: "moderate", 4: "heavy", 5: "blocked"}
-                      for result in r.json().get("results", []):
-                          cf        = result.get("currentFlow", {})
-                          speed     = cf.get("speed", 0)
-                          free_flow = cf.get("freeFlow", 0)
-                          jam       = cf.get("jamFactor", 0)
-                          cong_raw  = cf.get("congestion", {})
-                          cong_val  = cong_raw.get("value", 1) if isinstance(cong_raw, dict) else 1
-                          location  = result.get("location", {})
-                          shape     = location.get("shape", {})
-                          links     = shape.get("links", [{}])
-                          points    = (links[0] if links else {}).get("points", [{}])
-                          mid       = points[len(points) // 2] if points else {}
-                          traffic.append({
-                              "segment_id":   result.get("id", ""),
-                              "description":  location.get("description", ""),
-                              "lat":          mid.get("lat"),
-                              "lon":          mid.get("lng"),
-                              "speed_kmh":    speed,
-                              "free_flow_kmh": free_flow,
-                              "jam_factor":   jam,
-                              "congestion":   CONGESTION_MAP.get(cong_val, "unknown"),
-                              "collected_at": collected_at,
-                              "source":       "github-actions",
-                          })
-                  print(f"Traffic: {len(traffic)} records")
-              except Exception as e:
-                  print(f"Traffic fetch failed: {e}", file=sys.stderr)
-          else:
-              print("HERE_API_KEY not set — skipping traffic", file=sys.stderr)
-
           # ── Write output files ────────────────────────────────────────────
+          # Note: HERE Traffic fetch removed (API key revoked) — bus data only.
           (OUTPUT_DIR / "buses_latest.json").write_text(
               json.dumps(buses, ensure_ascii=False, indent=2), encoding="utf-8"
           )
-          (OUTPUT_DIR / "traffic_latest.json").write_text(
-              json.dumps(traffic, ensure_ascii=False, indent=2), encoding="utf-8"
-          )
           meta = {
-              "collected_at":  collected_at,
-              "bus_count":     len(buses),
-              "traffic_count": len(traffic),
+              "collected_at": collected_at,
+              "bus_count":    len(buses),
           }
           (OUTPUT_DIR / "meta.json").write_text(
               json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
           )
-          print(f"Wrote data-buffer/: buses={len(buses)}, traffic={len(traffic)}, collected_at={collected_at}")
+          print(f"Wrote data-buffer/: buses={len(buses)}, collected_at={collected_at}")
           PYEOF
 
       - name: Commit and push data snapshot
@@ -161,7 +103,6 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "actions@github.com"
           git add data-buffer/buses_latest.json \
-                  data-buffer/traffic_latest.json \
                   data-buffer/meta.json
           if git diff --cached --quiet; then
             echo "No data changes — skipping commit"
