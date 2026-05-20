@@ -513,13 +513,15 @@ function showScreen(id){
 // HOME MAP
 // ══════════════════════════════════
 function initHomeMap(){
-  homeMap=L.map('home-map',{center:TA,zoom:14,zoomControl:false,
+  // No maxBounds — let user pan freely. Bbox is enforced only on data filtering.
+  homeMap=L.map('home-map',{center:TA,zoom:13,zoomControl:false,
     attributionControl:false,
-    maxBounds:[[BBOX.latMin,BBOX.lonMin],[BBOX.latMax,BBOX.lonMax]],
-    minZoom:11,maxZoom:18});
+    minZoom:9,maxZoom:18});
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
     {subdomains:'abcd',maxZoom:19}).addTo(homeMap);
 
+  // Load TA buses immediately so map is never blank, then refine with geolocation if granted
+  loadNearby(TA[0],TA[1]);
   if(navigator.geolocation){
     navigator.geolocation.getCurrentPosition(p=>{
       const la=p.coords.latitude, lo=p.coords.longitude;
@@ -530,14 +532,10 @@ function initHomeMap(){
           fillColor:'#2196F3',fillOpacity:1,weight:3,opacity:.4}).addTo(homeMap);
         loadNearby(uLat,uLon);
       } else {
-        // User outside Gush Dan — fall back to TA center
-        uLat=TA[0]; uLon=TA[1];
-        homeMap.setView(TA,14);
         showToast('מחוץ לגוש דן — מציג מרכז תל אביב');
-        loadNearby(uLat,uLon);
       }
-    },()=>loadNearby(TA[0],TA[1]));
-  } else { loadNearby(TA[0],TA[1]); }
+    },()=>{ /* GPS denied — TA buses already loaded above */ });
+  }
 
   homeMap.on('click',e=>{
     if(inBbox(e.latlng.lat,e.latlng.lng)) loadNearby(e.latlng.lat,e.latlng.lng);
