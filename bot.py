@@ -1213,10 +1213,12 @@ class BotHandler(BaseHTTPRequestHandler):
         qs     = urllib.parse.parse_qs(parsed.query)
 
         # ── Gush Dan Transit App ─────────────────────────────────────────────
-        if path == "/gushdan":
-            self.send_html(os.path.join(BASE_DIR, "gushdan_app.html"))
-        elif path == "/moovit":
+        # /gushdan and /moovit both serve moovit.html (the polished NAYA Transit UI).
+        # gushdan_app.html is kept available at /gushdan-legacy for fallback.
+        if path == "/gushdan" or path == "/moovit":
             self.send_html(os.path.join(BASE_DIR, "moovit.html"))
+        elif path == "/gushdan-legacy":
+            self.send_html(os.path.join(BASE_DIR, "gushdan_app.html"))
 
         # ── Dankal Red Line — live vehicles + alert status ────────────────────
         elif path == "/api/dankal":
