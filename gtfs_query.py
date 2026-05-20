@@ -174,18 +174,31 @@ def get_route_stops_by_short_name(short_name: str, operator_id: str = "") -> lis
     אם לא נמצא ב-GTFS ומספר הקו הוא line_ref גדול (>1000, כמו קווי רכבת),
     מחזיר תחנות מ-Stride API ישירות.
     """
-    where = ["route_short_name = %s"]
+    where = ["r.route_short_name = %s"]
     params: list = [short_name]
     if operator_id:
-        where.append("agency_id = %s")
+        where.append("r.agency_id = %s")
         params.append(operator_id)
+    # Pick route_id with the MOST stop_times rows. Load_gtfs filters stop_times
+    # to Gush Dan, so route variants that only serve out-of-area stops have 0
+    # stop_times rows even though their trips exist — picking the first by id
+    # often hits one of those empty variants.
     rows = _q(
-        f"SELECT route_id, agency_id, route_long_name FROM gtfs.routes "
-        f"WHERE {' AND '.join(where)} ORDER BY route_id LIMIT 1",
+        f"""SELECT r.route_id, r.agency_id, r.route_long_name,
+                   COUNT(st.stop_id) AS stops_cnt
+            FROM gtfs.routes r
+            LEFT JOIN gtfs.trips t ON t.route_id = r.route_id
+            LEFT JOIN gtfs.stop_times st ON st.trip_id = t.trip_id
+            WHERE {' AND '.join(where)}
+            GROUP BY r.route_id, r.agency_id, r.route_long_name
+            ORDER BY stops_cnt DESC, r.route_id
+            LIMIT 1""",
         params,
     )
-    if rows:
+    if rows and rows[0].get("stops_cnt", 0) > 0:
         return get_route_stops(rows[0]["route_id"])
+    if rows:
+        return []   # route exists but has no Gush Dan stops loaded
 
     # ── Fallback: line_ref גדול (רכבת / קו פנימי של Stride) ──────────────────
     # מנסה למצוא מיקום נוכחי דרך Stride ולהציג תחנות מ-gtfs.stops
