@@ -413,7 +413,8 @@ html,body{height:100%;font-family:'Segoe UI',-apple-system,Arial,sans-serif;
 // ══════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════
-const BBOX = {latMin:31.87,latMax:32.21,lonMin:34.72,lonMax:34.95};
+const BBOX = {latMin:31.97,latMax:32.19,lonMin:34.73,lonMax:34.93};
+const REFRESH_MS = 15000;  // live data refresh interval
 const TA   = [32.0853, 34.7818];
 const OPS  = {
   '3': {name:'דן',          col:'#F7941D'},
@@ -459,10 +460,12 @@ const DANKAL = [
 let homeMap=null, dkMap=null, navMap=null;
 let uLat=TA[0], uLon=TA[1];
 let vMarkers=[];
+let dkVehMarkers=[];
 let fromCoords=null, toCoords=null;
 let depTimer=null, depStopId=null, depStopName=null, depBack_='home';
-let navTimer=null;
+let navTimer=null, navState=null, navEtaTimer=null, navStopMarkers=[], navVehMarker=null, navRoutePoly=null;
 let acTmr=null;
+let homeTimer=null, dkTimer=null;
 
 // ══════════════════════════════════
 // SCREEN SWITCH
@@ -473,10 +476,22 @@ function showScreen(id){
   document.getElementById('screen-'+id).classList.add('active');
   const ni=document.getElementById('ni-'+id);
   if(ni) ni.classList.add('on');
-  if(id==='home'   && !homeMap) initHomeMap();
-  if(id==='dankal' && !dkMap)   initDkMap();
-  if(id==='nav'    && !navMap)  initNavMap();
-  if(id==='fav')                renderFavs();
+
+  // Pause polling on screens that aren't visible (save battery + API quota)
+  if(id!=='home')   { clearInterval(homeTimer); homeTimer=null; }
+  if(id!=='dankal') { clearInterval(dkTimer);   dkTimer=null;   }
+  if(id!=='nav')    { clearInterval(navEtaTimer); navEtaTimer=null; }
+
+  if(id==='home') {
+    if(!homeMap) initHomeMap();
+    if(!homeTimer) homeTimer=setInterval(()=>loadNearby(uLat,uLon), REFRESH_MS);
+  }
+  if(id==='dankal') {
+    if(!dkMap) initDkMap();
+    if(!dkTimer) dkTimer=setInterval(loadDkStatus, REFRESH_MS);
+  }
+  if(id==='nav' && !navMap) initNavMap();
+  if(id==='fav')            renderFavs();
 }
 
 // ══════════════════════════════════
@@ -637,26 +652,32 @@ async function planRoute(){
       return;
     }
 
-    const now=new Date();
-    res.innerHTML=routes.slice(0,5).map(rt=>{
+    res.innerHTML=routes.slice(0,8).map(rt=>{
       const op=getOpByName(rt.operator)||{col:'#888',name:rt.operator};
-      const mins=20+Math.floor(Math.random()*30);
-      const arr=new Date(now.getTime()+mins*60000);
-      const arrS=hhmm(arr);
       const displayLine=rt.line_name||rt.line_ref;
-      return `<div class="rc" onclick='startNav(${JSON.stringify({line:rt.line_ref,lineName:rt.line_name||rt.line_ref,op:rt.operator,stop:rt.origin_stop||"",col:op.col})})'>
+      const liveTxt=rt.live_count?`🟢 ${rt.live_count} פעילים עכשיו`:'⚪ אין אוטובוסים פעילים כרגע';
+      const navArg=JSON.stringify({
+        line: displayLine,
+        lineName: displayLine,
+        lineRef: rt.line_ref,
+        op: rt.operator,
+        stop: rt.origin_stop||'',
+        originStopId: rt.origin_stop_id||'',
+        destStopId: rt.dest_stop_id||'',
+        col: op.col
+      });
+      return `<div class="rc" onclick='startNav(${navArg.replace(/'/g,"&#39;")})'>
         <div class="rc-stripe" style="background:${op.col}"></div>
         <div class="rc-body">
           <div class="rc-head">
-            <div class="rc-time">${mins} דקות</div>
-            <div class="rc-meta"><span>🕐 ${arrS}</span><span>0 החלפות</span></div>
+            <div class="rc-time">קו ${esc(displayLine)}</div>
+            <div class="rc-meta"><span>${liveTxt}</span>${rt.stops_between?`<span>${rt.stops_between} תחנות</span>`:''}</div>
           </div>
           <div class="rc-legs">
             <span class="leg-b" style="background:${op.col}">קו ${esc(displayLine)}</span>
             <span style="font-size:12px;color:${op.col};font-weight:600">${esc(op.name)}</span>
-            ${rt.origin_stop?`<span class="leg-w">📍 ${esc(rt.origin_stop)}</span>`:''}
           </div>
-          ${rt.final_stop?`<div style="margin-top:6px;font-size:12px;color:var(--muted)">↗ עד: ${esc(rt.final_stop)}</div>`:''}
+          ${rt.origin_stop?`<div style="margin-top:6px;font-size:12px;color:var(--muted)">📍 ${esc(rt.origin_stop)} → ${esc(rt.final_stop||'')}</div>`:''}
         </div>
       </div>`;
     }).join('');
@@ -676,25 +697,121 @@ function initNavMap(){
     {subdomains:'abcd',maxZoom:19}).addTo(navMap);
 }
 
+// rt = {line, lineName, op, stop, col, lineRef, originStopId, destStopId}
 function startNav(rt){
   showScreen('nav');
   if(!navMap) initNavMap();
-  navMap.setView([uLat,uLon],15);
-  // השתמש ב-lineName (שם קריא) אם קיים, אחרת line
+  navState=rt;
   const displayLine=rt.lineName||rt.line;
-  document.getElementById('np-title').textContent=`עלה לאוטובוס קו ${displayLine}`;
-  document.getElementById('np-sub').textContent=rt.stop?`בתחנת ${rt.stop}`:'בתחנה הקרובה';
-  startCd(4+Math.floor(Math.random()*6));
+  document.getElementById('np-title').textContent=`קו ${displayLine}`;
+  document.getElementById('np-sub').textContent='טוען מסלול ומיקום אוטובוס…';
+  document.getElementById('np-cd').textContent='…';
+  _navClearMap();
+  refreshNav();
+  if(navEtaTimer) clearInterval(navEtaTimer);
+  navEtaTimer=setInterval(refreshNav, REFRESH_MS);  // live refresh
 }
-function stopNav(){ clearInterval(navTimer); showScreen('route'); }
-function gotOn(){ clearInterval(navTimer); showToast('✓ עלית לאוטובוס — נסיעה טובה!'); showScreen('home'); }
-function missedIt(){ showToast('🔄 מחשב מסלול חלופי...'); startCd(8+Math.floor(Math.random()*5)); }
-function startCd(mins){
-  clearInterval(navTimer);
-  let s=mins*60;
-  const el=document.getElementById('np-cd');
-  navTimer=setInterval(()=>{ s--; if(s<=0){clearInterval(navTimer);el.textContent='0';return;} el.textContent=Math.ceil(s/60); },1000);
+
+function _navClearMap(){
+  navStopMarkers.forEach(m=>m.remove()); navStopMarkers=[];
+  if(navVehMarker){ navVehMarker.remove(); navVehMarker=null; }
+  if(navRoutePoly){ navRoutePoly.remove(); navRoutePoly=null; }
 }
+
+async function refreshNav(){
+  if(!navState||!navMap) return;
+  const rt=navState;
+  const lineKey=rt.lineRef||rt.line;     // numeric route_id
+  const shortName=rt.lineName||rt.line;  // human-readable (e.g. "5")
+  const col=rt.col||'#F7941D';
+  try{
+    // 1. Stops on this line (route_id is the GTFS line ref)
+    const sr=await fetch(`/gtfs/route_stops?short_name=${encodeURIComponent(shortName)}`);
+    const sd=await sr.json();
+    const stops=sd.stops||[];
+
+    // 2. Live vehicles for this line in Gush Dan
+    const vr=await fetch(`/line_info?line_ref=${encodeURIComponent(lineKey)}&short_name=${encodeURIComponent(shortName)}`);
+    const vd=await vr.json();
+    const vehicles=vd.vehicles||[];
+
+    _navClearMap();
+
+    // Draw route polyline
+    const pts=stops.filter(s=>s.stop_lat&&s.stop_lon).map(s=>[parseFloat(s.stop_lat),parseFloat(s.stop_lon)]);
+    if(pts.length>=2){
+      navRoutePoly=L.polyline(pts,{color:col,weight:4,opacity:.85}).addTo(navMap);
+    }
+
+    // Draw stops — highlight the user's origin stop if provided
+    stops.forEach(s=>{
+      if(!s.stop_lat||!s.stop_lon) return;
+      const isOrigin=String(s.stop_id)===String(rt.originStopId||'');
+      const r=isOrigin?9:5;
+      const m=L.circleMarker([parseFloat(s.stop_lat),parseFloat(s.stop_lon)],{
+        radius:r, color:col, weight:2,
+        fillColor:isOrigin?col:'#fff', fillOpacity:isOrigin?1:.9
+      }).addTo(navMap);
+      m.bindPopup(`<b>${esc(s.stop_name||'')}</b>${s.scheduled_dep?`<br>מתוכנן: ${esc(String(s.scheduled_dep).slice(0,5))}`:''}`);
+      navStopMarkers.push(m);
+    });
+
+    // Draw live bus position (closest to origin stop, if multiple)
+    let chosen=null, bestD=Infinity;
+    const ostop=stops.find(s=>String(s.stop_id)===String(rt.originStopId||''));
+    for(const v of vehicles){
+      if(!v.lat||!v.lon) continue;
+      if(!inBbox(v.lat,v.lon)) continue;
+      let d=0;
+      if(ostop&&ostop.stop_lat&&ostop.stop_lon){
+        d=Math.hypot(v.lat-parseFloat(ostop.stop_lat), v.lon-parseFloat(ostop.stop_lon));
+      }
+      if(d<bestD){ bestD=d; chosen=v; }
+    }
+    if(chosen){
+      const icon=L.divIcon({html:`<div style="background:${col};color:#fff;font-size:12px;font-weight:800;padding:3px 8px;border-radius:9px;box-shadow:0 2px 6px rgba(0,0,0,.4);border:2px solid #fff">🚌 ${esc(shortName)}</div>`,className:'',iconAnchor:[18,12]});
+      navVehMarker=L.marker([chosen.lat,chosen.lon],{icon,zIndexOffset:500}).addTo(navMap);
+      navVehMarker.bindPopup(`<b>קו ${esc(shortName)}</b><br>מהירות: ${chosen.vel||0} קמ"ש`);
+    }
+
+    // Fit map to relevant bounds (origin stop + bus, if both known)
+    const fit=[];
+    if(ostop) fit.push([parseFloat(ostop.stop_lat),parseFloat(ostop.stop_lon)]);
+    if(chosen) fit.push([chosen.lat,chosen.lon]);
+    if(fit.length>=2) navMap.fitBounds(fit,{padding:[60,60],maxZoom:16});
+    else if(fit.length===1) navMap.setView(fit[0],15);
+    else if(pts.length) navMap.fitBounds(pts,{padding:[40,40],maxZoom:14});
+
+    // ETA: rough straight-line distance / 25 km/h average bus speed
+    let etaTxt='';
+    if(chosen && ostop){
+      const km=Math.hypot((chosen.lat-parseFloat(ostop.stop_lat))*111,(chosen.lon-parseFloat(ostop.stop_lon))*88);
+      const mins=Math.max(1, Math.round(km/25*60));
+      etaTxt=`כ-${mins} דק'`;
+      document.getElementById('np-cd').textContent=String(mins);
+    } else if(chosen){
+      etaTxt='האוטובוס בדרך';
+      document.getElementById('np-cd').textContent='~';
+    } else {
+      etaTxt='אין אוטובוס פעיל כרגע';
+      document.getElementById('np-cd').textContent='—';
+    }
+    document.getElementById('np-title').textContent=`קו ${esc(shortName)}`;
+    document.getElementById('np-sub').textContent=
+      (rt.stop?`תחנה: ${rt.stop} · `:'')+etaTxt+` · ${vehicles.length} אוטובוסים בקו`;
+  } catch(e){
+    document.getElementById('np-sub').textContent='שגיאה בטעינת נתונים חיים';
+  }
+}
+
+function stopNav(){
+  clearInterval(navEtaTimer); navEtaTimer=null;
+  navState=null;
+  _navClearMap();
+  showScreen('route');
+}
+function gotOn(){ clearInterval(navEtaTimer); navEtaTimer=null; showToast('✓ עלית לאוטובוס — נסיעה טובה!'); showScreen('home'); }
+function missedIt(){ showToast('🔄 מעדכן מיקום…'); refreshNav(); }
 
 // ══════════════════════════════════
 // DANKAL RED LINE
@@ -744,13 +861,17 @@ async function loadDkStatus(){
       document.getElementById('dk-alert').style.display='block';
       document.getElementById('dk-alert-txt').textContent=d.alert;
     }
+    // Clear previous vehicle markers before re-rendering — prevents pile-up
+    dkVehMarkers.forEach(m=>m.remove()); dkVehMarkers=[];
     if(d.vehicles&&dkMap){
       for(const v of d.vehicles){
         if(!v.lat||!v.lon) continue;
+        if(!inBbox(v.lat,v.lon)) continue;  // Gush Dan guard
         const lbl=v.line_name||v.line||'🚊';
-        const icon=L.divIcon({html:`<div style="background:#E8212A;color:#fff;font-size:11px;font-weight:800;padding:2px 6px;border-radius:7px">🚊 ${lbl}</div>`,className:'',iconAnchor:[16,9]});
-        const m=L.marker([v.lat,v.lon],{icon}).addTo(dkMap);
-        m.bindPopup(`<b>קו ${lbl}</b>${v.speed?`<br>מהירות: ${v.speed} קמ"ש`:''}`)
+        const icon=L.divIcon({html:`<div style="background:#E8212A;color:#fff;font-size:11px;font-weight:800;padding:2px 6px;border-radius:7px;box-shadow:0 1px 4px rgba(0,0,0,.3)">🚊 ${lbl}</div>`,className:'',iconAnchor:[16,9]});
+        const m=L.marker([v.lat,v.lon],{icon,zIndexOffset:200}).addTo(dkMap);
+        m.bindPopup(`<b>קו ${lbl}</b>${v.speed?`<br>מהירות: ${v.speed} קמ"ש`:''}`);
+        dkVehMarkers.push(m);
       }
     }
   } catch(e){}
@@ -764,36 +885,48 @@ function openDkStation(s){
   setTimeout(()=>renderDkDep(s),50);
 }
 
-function renderDkDep(s){
-  const now=new Date();
-  const rows=[];
-  for(let i=0;i<3;i++){
-    const m=4+i*8+Math.floor(Math.random()*3);
-    const dl=[0,0,0,2,-1,3][Math.floor(Math.random()*6)];
-    rows.push({dir:'← פתח תקווה מרכז',t:hhmm(new Date(now.getTime()+m*60000)),dl});
-  }
-  for(let i=0;i<3;i++){
-    const m=3+i*9+Math.floor(Math.random()*4);
-    const dl=[0,0,2,-1,0,4][Math.floor(Math.random()*6)];
-    rows.push({dir:'בת ים ים →',t:hhmm(new Date(now.getTime()+m*60000)),dl});
-  }
-  rows.sort((a,b)=>a.t.localeCompare(b.t));
+async function renderDkDep(s){
   const am=[s.P?'🚗 חניה':'',s.B?'🚲 אופניים':'',s.A?'♿ נגיש':''].filter(Boolean).join(' • ');
-  document.getElementById('dk-modal-body').innerHTML=`
-    <div style="padding:12px 16px 4px">
-      ${am?`<div style="font-size:12px;color:var(--muted);margin-bottom:10px">${am}</div>`:''}
-      <table class="dp-table">
-        <tr><th>כיוון</th><th>שעה</th><th>סטטוס</th></tr>
-        ${rows.map(r=>{
-          let st,cl;
-          if(r.dl>0){st=`מאחר ב-${r.dl} דק'`;cl='s-late';}
-          else if(r.dl<0){st=`מוקדם ב-${Math.abs(r.dl)} דק'`;cl='s-early';}
-          else{st='✅ בזמן';cl='s-ok';}
-          return `<tr><td style="font-size:12px">${r.dir}</td><td><b>${r.t}</b></td><td class="${cl}">${st}</td></tr>`;
-        }).join('')}
-      </table>
-      <button class="save-btn" onclick="saveFavStop('${esc(s.id)}','${esc(s.n)}')">⭐ שמור תחנה</button>
+  const body=document.getElementById('dk-modal-body');
+  // Find closest GTFS stop, then pull its real schedule.
+  try{
+    const nr=await fetch(`/gtfs/nearby?lat=${s.lat}&lon=${s.lon}&radius=350`);
+    const nd=await nr.json();
+    const cand=(nd.stops||[])[0];
+    if(!cand){
+      body.innerHTML=`<div style="padding:24px;text-align:center;color:var(--muted);font-size:14px">
+        לא נמצאה תחנת GTFS קרובה לתחנת הדנקל הזו
+      </div>
+      <button class="save-btn" onclick="saveFavStop('${esc(s.id)}','${esc(s.n)}')">⭐ שמור תחנה</button>`;
+      return;
+    }
+    const now=new Date();
+    const hh=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+    const sr=await fetch(`/gtfs/schedule?stop_id=${encodeURIComponent(cand.stop_id)}&from=${hh}`);
+    const sd=await sr.json();
+    const sched=(sd.schedule||[]).slice(0,8);
+    body.innerHTML=`
+      <div style="padding:12px 16px 4px">
+        ${am?`<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${am}</div>`:''}
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">📍 ${esc(cand.stop_name)}</div>
+        ${sched.length?`
+          <table class="dp-table">
+            <tr><th>קו</th><th>כיוון</th><th>שעה</th></tr>
+            ${sched.map(row=>`<tr>
+              <td><b>${esc(row.route_short_name||'?')}</b></td>
+              <td style="font-size:12px">${esc(row.trip_headsign||'')}</td>
+              <td class="s-ok">${esc((row.departure_time||'').slice(0,5))}</td>
+            </tr>`).join('')}
+          </table>`:`<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">
+            אין עזיבות מתוכננות בקרוב
+          </div>`}
+        <button class="save-btn" onclick="saveFavStop('${esc(s.id)}','${esc(s.n)}')">⭐ שמור תחנה</button>
+      </div>`;
+  } catch(e){
+    body.innerHTML=`<div style="padding:24px;text-align:center;color:var(--muted);font-size:14px">
+      שגיאה בטעינת לוח: ${esc(e.message)}
     </div>`;
+  }
 }
 
 function closeDkModal(){ document.getElementById('dk-modal').classList.remove('show'); }

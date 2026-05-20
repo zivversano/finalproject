@@ -1072,11 +1072,18 @@ class BotHandler(BaseHTTPRequestHandler):
             SYSTEM = (
                 "אתה סוכן תחבורה ציבורית חכם לגוש דן ותל אביב, ישראל. "
                 "ענה תמיד בעברית בתשובות קצרות וברורות. "
+                "⚠️ סייג קריטי: ענה אך ורק על תחבורה באזור גוש דן "
+                f"(קואורדינטות: lat {GUSH_DAN['lat_min']}-{GUSH_DAN['lat_max']}, "
+                f"lon {GUSH_DAN['lon_min']}-{GUSH_DAN['lon_max']}). "
+                "אם המשתמש שואל על קו, כתובת או תחנה מחוץ לגוש דן — "
+                "השב בנימוס שהמערכת מכסה רק את גוש דן והצע לו לשאול על "
+                "כתובת בתחום. "
                 "שאל שאלות המשך כדי לקבל מידע חסר. "
                 "כשמישהו שואל על אוטובוסים ליד כתובת — שאל מה הכתובת. "
                 "כשמישהו שואל על קו — שאל מאיפה לאן. "
                 "כשמישהו שואל על רכבת — שאל מאיזו תחנה. "
-                "אל תמציא מספרי קווים או שעות שאינך בטוח בהם. "
+                "אל תמציא מספרי קווים או שעות שאינך בטוח בהם — "
+                "כל נתון שאתה נותן חייב לבוא מ-tool_data למטה. "
                 + (f"\nנתונים: {tool_data}" if tool_data else "")
             )
 
@@ -1206,7 +1213,9 @@ class BotHandler(BaseHTTPRequestHandler):
         qs     = urllib.parse.parse_qs(parsed.query)
 
         # ── Gush Dan Transit App ─────────────────────────────────────────────
-        if path == "/gushdan" or path == "/moovit":
+        if path == "/gushdan":
+            self.send_html(os.path.join(BASE_DIR, "gushdan_app.html"))
+        elif path == "/moovit":
             self.send_html(os.path.join(BASE_DIR, "moovit.html"))
 
         # ── Dankal Red Line — live vehicles + alert status ────────────────────
@@ -1869,52 +1878,164 @@ class BotHandler(BaseHTTPRequestHandler):
                     self.send_json({"error": "לא ניתן לאתר כתובות", "routes": []})
                     return
 
-                lat_min=min(lat1,lat2)-0.025; lat_max=max(lat1,lat2)+0.025
-                lon_min=min(lon1,lon2)-0.025; lon_max=max(lon1,lon2)+0.025
+                # Both endpoints must be inside Gush Dan
+                if not (_in_gush_dan(lat1, lon1) and _in_gush_dan(lat2, lon2)):
+                    self.send_json({
+                        "error":       "כתובת המוצא או היעד אינה בגוש דן",
+                        "origin":      {"label": olabel, "lat": lat1, "lon": lon1},
+                        "destination": {"label": dlabel, "lat": lat2, "lon": lon2},
+                        "routes":      []
+                    })
+                    return
 
-                sv = _rq.get(f"{HASADNA_URL}/siri_vehicle_locations/list", params={
-                    "lat__greater_or_equal": lat_min, "lat__lower_or_equal": lat_max,
-                    "lon__greater_or_equal": lon_min, "lon__lower_or_equal": lon_max,
-                    "limit": 200, "order_by": "id desc"
-                }, timeout=12).json()
+                # ── Step 1: GTFS-based candidates — lines that actually serve
+                # an origin-stop BEFORE a destination-stop in the same direction ──
+                try:
+                    from gtfs_query import get_nearby_stops, _q
+                except Exception:
+                    get_nearby_stops, _q = None, None
 
-                line_map = {}
-                for v in sv:
-                    lr  = str(v.get("siri_route__line_ref",""))
-                    rsn = str(v.get("siri_route__gtfs_route__route_short_name") or "").strip()
-                    op  = str(v.get("siri_route__operator_ref",""))
-                    if lr and lr not in line_map:
-                        if rsn:
-                            _learn_line(lr, rsn)
-                        line_map[lr] = (_OP.get(op, f"מפעיל {op}"), rsn or _resolve_line(lr))
-
-                routes_list = []
-                for lr, (op_name, line_name) in sorted(
-                    line_map.items(),
-                    key=lambda x: (int(x[1][1]) if x[1][1].isdigit() else 9999,
-                                   int(x[0])    if x[0].isdigit()    else 9999)
-                )[:15]:
-                    rinfo = {"line_ref": lr, "line_name": line_name,
-                             "operator": op_name,
-                             "origin_stop": "", "final_stop": ""}
+                gtfs_routes_list = []
+                origin_stops_dbg = []
+                dest_stops_dbg   = []
+                if get_nearby_stops and _q:
                     try:
-                        sd = _rq.get(
-                            f"http://localhost:{BOT_PORT}/gtfs/route_stops",
-                            params={"short_name": lr}, timeout=3
-                        ).json()
-                        sts = sd.get("stops", [])
-                        if sts:
-                            rinfo["origin_stop"] = sts[0].get("stop_name","")
-                            rinfo["final_stop"]  = sts[-1].get("stop_name","")
-                    except Exception:
-                        pass
-                    routes_list.append(rinfo)
+                        o_stops = get_nearby_stops(lat1, lon1, radius_m=600)[:8]
+                        d_stops = get_nearby_stops(lat2, lon2, radius_m=600)[:8]
+                        origin_stops_dbg = [{"stop_id": s["stop_id"],
+                                             "stop_name": s["stop_name"],
+                                             "distance_m": s.get("distance_m")}
+                                            for s in o_stops]
+                        dest_stops_dbg   = [{"stop_id": s["stop_id"],
+                                             "stop_name": s["stop_name"],
+                                             "distance_m": s.get("distance_m")}
+                                            for s in d_stops]
+
+                        if o_stops and d_stops:
+                            o_ids = [s["stop_id"] for s in o_stops]
+                            d_ids = [s["stop_id"] for s in d_stops]
+                            o_name = {s["stop_id"]: s["stop_name"] for s in o_stops}
+                            d_name = {s["stop_id"]: s["stop_name"] for s in d_stops}
+
+                            # Single query: routes that have a trip stopping at
+                            # an origin-stop and (later in the same trip) a
+                            # destination-stop. We pick the closest origin/dest
+                            # pair per route.
+                            ph_o = ",".join(["%s"] * len(o_ids))
+                            ph_d = ",".join(["%s"] * len(d_ids))
+                            rows = _q(f"""
+                                SELECT DISTINCT ON (r.route_id)
+                                    r.route_id,
+                                    r.route_short_name,
+                                    r.route_long_name,
+                                    r.agency_id,
+                                    a.agency_name,
+                                    sto.stop_id        AS origin_stop_id,
+                                    sto.stop_sequence  AS origin_seq,
+                                    std.stop_id        AS dest_stop_id,
+                                    std.stop_sequence  AS dest_seq
+                                FROM gtfs.routes r
+                                JOIN gtfs.trips      t   ON t.route_id = r.route_id
+                                JOIN gtfs.stop_times sto ON sto.trip_id = t.trip_id
+                                JOIN gtfs.stop_times std ON std.trip_id = t.trip_id
+                                LEFT JOIN gtfs.agency a  ON a.agency_id = r.agency_id
+                                WHERE sto.stop_id IN ({ph_o})
+                                  AND std.stop_id IN ({ph_d})
+                                  AND std.stop_sequence > sto.stop_sequence
+                                ORDER BY r.route_id, (std.stop_sequence - sto.stop_sequence)
+                                LIMIT 25
+                            """, tuple(o_ids) + tuple(d_ids))
+
+                            for r in rows:
+                                rid  = str(r["route_id"])
+                                rsn  = str(r["route_short_name"] or rid)
+                                _learn_line(rid, rsn)
+                                op_id = str(r.get("agency_id") or "")
+                                gtfs_routes_list.append({
+                                    "line_ref":     rid,
+                                    "line_name":    rsn,
+                                    "operator":     r.get("agency_name") or _OP.get(op_id, f"מפעיל {op_id}"),
+                                    "operator_ref": op_id,
+                                    "origin_stop":  o_name.get(r["origin_stop_id"], ""),
+                                    "final_stop":   d_name.get(r["dest_stop_id"], ""),
+                                    "origin_stop_id": r["origin_stop_id"],
+                                    "dest_stop_id":   r["dest_stop_id"],
+                                    "stops_between":  int(r["dest_seq"] - r["origin_seq"]),
+                                    "source":         "gtfs",
+                                })
+                    except Exception as _e:
+                        log.debug(f"/route_plan GTFS path failed: {_e}")
+
+                # ── Step 2: enrich with live vehicles inside Gush Dan ──────────
+                live_by_line = {}
+                try:
+                    sv = _rq.get(f"{HASADNA_URL}/siri_vehicle_locations/list", params={
+                        "lat__greater_or_equal": GUSH_DAN["lat_min"],
+                        "lat__lower_or_equal":   GUSH_DAN["lat_max"],
+                        "lon__greater_or_equal": GUSH_DAN["lon_min"],
+                        "lon__lower_or_equal":   GUSH_DAN["lon_max"],
+                        "limit": 200, "order_by": "id desc"
+                    }, timeout=12).json()
+                    if isinstance(sv, list):
+                        for v in sv:
+                            lr  = str(v.get("siri_route__line_ref",""))
+                            rsn = str(v.get("siri_route__gtfs_route__route_short_name") or "").strip()
+                            if rsn:
+                                _learn_line(lr, rsn)
+                            # Key both line_ref AND its readable short_name so
+                            # we can join to GTFS route_id == line_ref or to rsn.
+                            for k in (lr, rsn):
+                                if k and k not in live_by_line:
+                                    live_by_line[k] = {
+                                        "live_count": 0,
+                                        "operator_ref": str(v.get("siri_route__operator_ref","")),
+                                    }
+                            if lr:
+                                live_by_line[lr]["live_count"] = live_by_line[lr].get("live_count", 0) + 1
+                except Exception as _e:
+                    log.debug(f"/route_plan live enrichment failed: {_e}")
+
+                for r in gtfs_routes_list:
+                    info = live_by_line.get(r["line_ref"]) or live_by_line.get(r["line_name"]) or {}
+                    r["live_count"] = info.get("live_count", 0)
+                    if not r.get("operator_ref"):
+                        r["operator_ref"] = info.get("operator_ref", "")
+
+                # ── Step 3: if GTFS was unavailable, fall back to bbox-only ────
+                if not gtfs_routes_list and live_by_line:
+                    seen = set()
+                    for k, info in live_by_line.items():
+                        if k in seen or not k.isdigit():
+                            continue
+                        # Prefer readable short names (1-4 digits) as primary entries
+                        if len(k) > 4:
+                            continue
+                        seen.add(k)
+                        op = info.get("operator_ref","")
+                        gtfs_routes_list.append({
+                            "line_ref":     k,
+                            "line_name":    k,
+                            "operator":     _OP.get(op, f"מפעיל {op}"),
+                            "operator_ref": op,
+                            "origin_stop":  "",
+                            "final_stop":   "",
+                            "live_count":   info.get("live_count", 0),
+                            "source":       "live-bbox",
+                        })
+
+                # Sort: prefer lines with live buses, then by numeric short name
+                gtfs_routes_list.sort(key=lambda r: (
+                    -1 if r.get("live_count") else 0,
+                    int(r["line_name"]) if str(r["line_name"]).isdigit() else 9999
+                ))
 
                 self.send_json({
                     "origin":      {"label": olabel, "lat": lat1, "lon": lon1},
                     "destination": {"label": dlabel, "lat": lat2, "lon": lon2},
-                    "routes":      routes_list,
-                    "count":       len(routes_list)
+                    "routes":      gtfs_routes_list[:15],
+                    "count":       len(gtfs_routes_list[:15]),
+                    "origin_stops": origin_stops_dbg,
+                    "dest_stops":   dest_stops_dbg,
                 })
             except Exception as e:
                 self.send_json({"error": str(e), "routes": []}, status=500)
@@ -2258,8 +2379,16 @@ class BotHandler(BaseHTTPRequestHandler):
                 # Step 1: active vehicles for this line — only ACTIVE (velocity > 0)
                 # Also constrain by operator_ref so we don't accidentally pull a different
                 # operator's line that happens to share the same line_ref.
-                _veh_params = {"siri_routes__line_ref": line_ref,
-                               "limit": 30, "order_by": "id desc"}
+                # Gush Dan bbox filter prevents lines outside the metro area from leaking in
+                # (e.g. inter-city lines that share a line_ref with a Tel Aviv route).
+                _veh_params = {
+                    "siri_routes__line_ref":   line_ref,
+                    "lat__greater_or_equal":   GUSH_DAN["lat_min"],
+                    "lat__lower_or_equal":     GUSH_DAN["lat_max"],
+                    "lon__greater_or_equal":   GUSH_DAN["lon_min"],
+                    "lon__lower_or_equal":     GUSH_DAN["lon_max"],
+                    "limit": 30, "order_by": "id desc",
+                }
                 if operator_ref:
                     _veh_params["siri_routes__operator_ref"] = operator_ref
                 vehs = _rq.get(
@@ -2269,6 +2398,11 @@ class BotHandler(BaseHTTPRequestHandler):
                 ).json()
                 if not isinstance(vehs, list):
                     vehs = []
+
+                # Defensive: also drop any leakage outside Gush Dan
+                vehs = [v for v in vehs
+                        if _in_gush_dan(v.get("lat") or v.get("calculated_lat"),
+                                        v.get("lon") or v.get("calculated_lon"))]
 
                 # Filter to only moving vehicles (real "active" — speed > 0)
                 vehs_active = [v for v in vehs if (v.get("velocity") or 0) > 0]

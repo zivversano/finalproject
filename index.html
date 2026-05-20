@@ -631,7 +631,7 @@ function initMap() {
   lmap.on('click', e => fetchNearbyForCoords(e.latlng.lat, e.latlng.lng));
 
   refreshBuses();
-  setInterval(refreshBuses, 30000);
+  setInterval(refreshBuses, 15000);  // live refresh every 15s
   setStatus('פעיל', true);
 }
 
@@ -1212,6 +1212,7 @@ let lvDirections = [];     // [{first_stop, last_stop, stops:[{name,stop_id,lat,
 let lvDirIdx     = 0;
 let lvStopsData  = [];     // current direction's stops
 let lvVehicles   = [];     // live vehicles
+let lvRefreshTimer = null; // live position refresh interval
 
 // map layers for line view
 let lvMapRoute   = null;
@@ -1266,16 +1267,43 @@ async function openLineView(lineRef, color) {
     _lvRenderStops();
     _lvDrawMap();
 
+    // Live refresh of vehicle positions every 10s (stops/route stay cached)
+    if (lvRefreshTimer) clearInterval(lvRefreshTimer);
+    lvRefreshTimer = setInterval(_lvRefreshVehicles, 10000);
+
   } catch(e) {
     document.getElementById('lv-stops').innerHTML =
       `<div class="lv-loading">⚠️ שגיאה בטעינה: ${esc(e.message)}</div>`;
   }
 }
 
+// ── Refresh only live vehicles (no flicker on stops/route) ───────────────────
+async function _lvRefreshVehicles() {
+  if (!lvLineRef) return;
+  try {
+    const data = await fetch(`/line_info?line_ref=${encodeURIComponent(lvLineRef)}`)
+      .then(r => r.json());
+    lvVehicles = data.vehicles || [];
+    document.getElementById('lv-veh-count').textContent =
+      lvVehicles.length ? `🟢 ${lvVehicles.length} כלי רכב בשטח כרגע` : '⚪ אין כלי רכב פעילים';
+    // Redraw only the vehicle markers — keep route + stops as-is
+    lvMapVehs.forEach(m => lmap.removeLayer(m)); lvMapVehs = [];
+    lvVehicles.forEach(v => {
+      const m = L.circleMarker([v.lat, v.lon], {
+        radius: 8, color: '#fff', weight: 2,
+        fillColor: lvColor, fillOpacity: 1
+      }).addTo(lmap);
+      m.bindPopup(`<b>קו ${esc(lvLineRef)}</b><br>מהירות: ${v.vel || 0} קמ"ש`);
+      lvMapVehs.push(m);
+    });
+  } catch(e) { /* silent — stale data is better than no data */ }
+}
+
 // ── Close ─────────────────────────────────────────────────────────────────────
 function closeLineView() {
   document.getElementById('line-view').classList.add('lv-hidden');
   _lvClearMap();
+  if (lvRefreshTimer) { clearInterval(lvRefreshTimer); lvRefreshTimer = null; }
   lvLineRef = ''; lvDirections = []; lvVehicles = [];
 }
 
